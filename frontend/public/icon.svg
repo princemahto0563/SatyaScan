@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#14b8a6"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#020617"/>
+    </linearGradient>
+  </defs>
+  <!-- Background Rounded Squircle -->
+  <rect width="512" height="512" rx="110" fill="url(#bgGrad)"/>
+  <rect width="504" height="504" x="4" y="4" rx="106" stroke="#334155" stroke-width="8"/>
+  <!-- Shield Emblem -->
+  <path d="M256 96L390 144V264C390 354 332 418 256 448C180 418 122 354 122 264V144L256 96Z" fill="#09131d" stroke="url(#shieldGrad)" stroke-width="16" stroke-linejoin="round"/>
+  <!-- Inner Crosshair / Optical Target -->
+  <circle cx="256" cy="264" r="70" stroke="#0ea5e9" stroke-width="8" stroke-dasharray="16 8"/>
+  <line x1="256" y1="160" x2="256" y2="210" stroke="#14b8a6" stroke-width="8" stroke-linecap="round"/>
+  <line x1="256" y1="318" x2="256" y2="368" stroke="#14b8a6" stroke-width="8" stroke-linecap="round"/>
+  <line x1="152" y1="264" x2="202" y2="264" stroke="#14b8a6" stroke-width="8" stroke-linecap="round"/>
+  <line x1="310" y1="264" x2="360" y2="264" stroke="#14b8a6" stroke-width="8" stroke-linecap="round"/>
+  <!-- Checkmark -->
+  <path d="M220 264L245 289L296 238" stroke="#2dd4bf" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
