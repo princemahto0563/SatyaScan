@@ -1,0 +1,182 @@
+"""
+SatyaScan Pydantic Schemas
+Defines request and response schemas for all API endpoints.
+"""
+
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from pydantic import BaseModel, EmailStr, Field
+
+
+# --- Auth Schemas ---
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+    username: str
+    full_name: str
+    badge_number: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    role: str
+    full_name: str
+    badge_number: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# --- Screening Component Schemas ---
+
+class ExtractedFieldSchema(BaseModel):
+    field_name: str
+    visual_value: Optional[str] = None
+    mrz_value: Optional[str] = None
+    confidence: float
+    match_status: str
+    bounding_box: Optional[List[List[int]]] = None
+
+
+class ValidationFindingSchema(BaseModel):
+    rule_id: str
+    category: str = "STANDARDS_COMPLIANCE"
+    severity: str
+    field: Optional[str] = None
+    expected: Optional[str] = None
+    observed: Optional[str] = None
+    message: str
+    classification: str = "OFFICIAL_STANDARD"
+
+
+class TamperFindingSchema(BaseModel):
+    technique: str
+    severity: str
+    score: float
+    summary: str
+    observation: Optional[str] = None
+    interpretation: Optional[str] = None
+
+
+class FaceResultSchema(BaseModel):
+    metric: str = "Cosine Similarity"
+    similarity_score: float
+    threshold: float = 0.65
+    verification_result: str
+    appearance_level: str = "MINIMAL"
+    observations: List[str] = []
+    recommendation: Optional[str] = None
+    disclaimer: str = "Similarity score is a model-derived metric, not a probability."
+
+
+class IdentityMatchSchema(BaseModel):
+    matched_document_id: str
+    matched_name: str
+    similarity: float
+    alert_message: str
+
+
+class AuditEventSchema(BaseModel):
+    id: int
+    timestamp: datetime
+    actor: str
+    event_type: str
+    payload_hash: str
+    previous_hash: str
+    event_hash: str
+
+    class Config:
+        from_attributes = True
+
+
+class AuditVerificationResult(BaseModel):
+    screening_id: str
+    is_valid: bool
+    total_events: int
+    genesis_hash: str
+    head_hash: str
+    verified_at: datetime
+    status_message: str
+
+
+# --- Screening Response Schemas ---
+
+class ScreeningSummaryResponse(BaseModel):
+    id: str
+    created_at: datetime
+    document_type: str
+    masked_document_id: str
+    status: str
+    risk_score: float
+    risk_band: str
+    recommendation: Optional[str] = None
+    execution_latency_ms: float
+
+    class Config:
+        from_attributes = True
+
+
+class ScreeningDetailResponse(BaseModel):
+    id: str
+    created_at: datetime
+    document_type: str
+    masked_document_id: str
+    status: str
+    risk_score: float
+    risk_band: str
+    recommendation: Optional[str] = None
+    execution_latency_ms: float
+    doc_image_url: Optional[str] = None
+    live_image_url: Optional[str] = None
+    ela_heatmap_url: Optional[str] = None
+
+    quality_assessment: Dict[str, Any]
+    extracted_fields: List[ExtractedFieldSchema]
+    mrz_data: Optional[Dict[str, Any]] = None
+    validation_findings: List[ValidationFindingSchema]
+    tamper_findings: List[TamperFindingSchema]
+    tamper_summary: Dict[str, Any]
+    face_result: Optional[FaceResultSchema] = None
+    identity_matches: List[IdentityMatchSchema]
+    risk_reasons: List[Dict[str, Any]]
+    signal_breakdown: Dict[str, float]
+    audit_trail: List[AuditEventSchema]
+
+    class Config:
+        from_attributes = True
+
+
+# --- Watchlist Schemas ---
+
+class WatchlistEntryCreate(BaseModel):
+    document_id: str
+    full_name: str
+    nationality: str = "IND"
+    reason: str
+    risk_category: str = "STOLEN_PASSPORT"
+    status: str = "ACTIVE"
+
+
+class WatchlistEntryResponse(BaseModel):
+    id: int
+    document_id: str
+    full_name: str
+    nationality: str
+    reason: str
+    risk_category: str
+    status: str
+    classification: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

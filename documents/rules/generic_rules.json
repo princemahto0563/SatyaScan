@@ -1,0 +1,43 @@
+{
+  "document_type": "GENERIC",
+  "version": "1.0.0",
+  "authority": "SatyaScan System Operational Standards",
+  "rules": [
+    {
+      "rule_id": "IMAGE_QUALITY_SUFFICIENT",
+      "name": "Pre-Screening Document Image Quality",
+      "category": "QUALITY",
+      "severity": "HIGH",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "ISO/IEC 29794-1 Biometric Sample Quality",
+      "description": "Image must possess adequate sharpness, contrast, and resolution without critical specular reflection."
+    },
+    {
+      "rule_id": "TAMPER_ANOMALY_THRESHOLD",
+      "name": "Multi-Signal Forensic Anomaly Limit",
+      "category": "FORENSIC",
+      "severity": "HIGH",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Forensic Document Examination Best Practices",
+      "description": "Composite forensic anomaly score must remain within normal baseline limits."
+    },
+    {
+      "rule_id": "BIOMETRIC_SIMILARITY_THRESHOLD",
+      "name": "Face Embedding Verification Threshold",
+      "category": "BIOMETRICS",
+      "severity": "CRITICAL",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "FIDO / ISO 19794-5 Face Image Data",
+      "description": "Biometric cosine similarity between document photograph and live selfie must equal or exceed 0.65."
+    },
+    {
+      "rule_id": "MULTI_IDENTITY_REUSE",
+      "name": "Single Face Across Multiple Disparate Identities",
+      "category": "SECURITY",
+      "severity": "CRITICAL",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Watchlist & Multi-Identity Detection Guidelines",
+      "description": "Biometric face signature must not correlate with previously recorded disparate synthetic identities."
+    }
+  ]
+}

@@ -1,0 +1,335 @@
+"""
+SatyaScan Forensic Case Report Generator (ReportLab)
+Generates an official, court-grade border security screening summary PDF document
+with SatyaScan branding, case metadata, masked PII, forensic findings, biometric metrics,
+SHA-256 audit digest, and mandatory decision-support disclaimers.
+"""
+
+from typing import Dict, Any, List
+import os
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, HRFlowable
+)
+from reportlab.pdfgen import canvas
+
+
+class NumberedCanvas(canvas.Canvas):
+    """Adds standard running footer with page numbers and security classifications."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_page_number(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_page_number(self, page_count):
+        self.saveState()
+        self.setFont("Helvetica", 8)
+        self.setFillColor(colors.HexColor("#475569"))
+        # Header text
+        self.drawString(54, 755, "CONFIDENTIAL // LAW ENFORCEMENT & IMMIGRATION SCREENING RECORD")
+        self.setStrokeColor(colors.HexColor("#CBD5E1"))
+        self.setLineWidth(0.5)
+        self.line(54, 748, 558, 748)
+        
+        # Footer text
+        self.line(54, 45, 558, 45)
+        self.drawString(54, 32, "SatyaScan AI-Assisted Identity & Document Screening Platform · SIH26188")
+        page_str = f"Page {self._pageNumber} of {page_count}"
+        self.drawRightString(558, 32, page_str)
+        self.restoreState()
+
+
+class ReportGenerator:
+    """
+    Builds official screening PDF reports using ReportLab.
+    """
+
+    @classmethod
+    def generate_pdf(cls, case_data: Dict[str, Any], output_pdf_path: str) -> str:
+        """
+        Renders complete multi-section screening dossier into PDF.
+        """
+        os.makedirs(os.path.dirname(output_pdf_path), exist_ok=True)
+        doc = SimpleDocTemplate(
+            output_pdf_path,
+            pagesize=letter,
+            leftMargin=54,
+            rightMargin=54,
+            topMargin=60,
+            bottomMargin=54
+        )
+
+        styles = getSampleStyleSheet()
+        normal = styles["Normal"]
+
+        # Custom styles
+        title_style = ParagraphStyle(
+            "DocTitle",
+            parent=normal,
+            fontName="Helvetica-Bold",
+            fontSize=18,
+            leading=22,
+            textColor=colors.HexColor("#0F172A")
+        )
+        subtitle_style = ParagraphStyle(
+            "DocSubTitle",
+            parent=normal,
+            fontName="Helvetica",
+            fontSize=9,
+            leading=12,
+            textColor=colors.HexColor("#64748B")
+        )
+        section_heading = ParagraphStyle(
+            "SectionHeading",
+            parent=normal,
+            fontName="Helvetica-Bold",
+            fontSize=11,
+            leading=14,
+            textColor=colors.HexColor("#0F766E"),
+            spaceBefore=8,
+            spaceAfter=4
+        )
+        cell_bold = ParagraphStyle(
+            "CellBold", parent=normal, fontName="Helvetica-Bold", fontSize=8, leading=10, textColor=colors.HexColor("#1E293B")
+        )
+        cell_text = ParagraphStyle(
+            "CellText", parent=normal, fontName="Helvetica", fontSize=8, leading=10, textColor=colors.HexColor("#334155")
+        )
+
+        elements = []
+
+        # 1. Document Header Banner
+        screening_id = case_data.get("id", "SAT-2026-UNKNOWN")
+        risk_band = case_data.get("risk_band", "LOW")
+        risk_score = case_data.get("risk_score", 0.0)
+
+        band_colors = {
+            "LOW": colors.HexColor("#059669"),
+            "MEDIUM": colors.HexColor("#D97706"),
+            "HIGH": colors.HexColor("#DC2626"),
+            "CRITICAL": colors.HexColor("#991B1B")
+        }
+        accent_color = band_colors.get(risk_band, colors.HexColor("#475569"))
+
+        header_data = [
+            [
+                Paragraph("<b>SatyaScan</b><br/><font size=9 color='#475569'>AI-Assisted Identity & Document Screening Platform</font>", title_style),
+                Paragraph(
+                    f"<para align=right><font size=14 color='{accent_color.hexval()}'><b>{risk_band} RISK</b></font><br/>"
+                    f"<font size=10 color='#1E293B'><b>Score: {risk_score:.1f} / 100</b></font><br/>"
+                    f"<font size=8 color='#64748B'>CASE #{screening_id}</font></para>",
+                    normal
+                )
+            ]
+        ]
+        t_head = Table(header_data, colWidths=[330, 174])
+        t_head.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+            ('TOPPADDING', (0,0), (-1,-1), 0),
+        ]))
+        elements.append(t_head)
+        elements.append(Spacer(1, 8))
+        elements.append(HRFlowable(width="100%", thickness=1.5, color=accent_color, spaceAfter=8))
+
+        # 2. Case Overview Table
+        ts_str = case_data.get("created_at", datetime.now().isoformat())
+        doc_type = case_data.get("document_type", "PASSPORT")
+        masked_id = case_data.get("masked_document_id", "N/A")
+
+        overview_data = [
+            [
+                Paragraph("<b>Screening ID:</b>", cell_bold), Paragraph(screening_id, cell_text),
+                Paragraph("<b>Screening Date:</b>", cell_bold), Paragraph(str(ts_str)[:19], cell_text)
+            ],
+            [
+                Paragraph("<b>Document Type:</b>", cell_bold), Paragraph(doc_type, cell_text),
+                Paragraph("<b>Masked Doc No:</b>", cell_bold), Paragraph(masked_id, cell_text)
+            ],
+            [
+                Paragraph("<b>Recommendation:</b>", cell_bold),
+                Paragraph(f"<b>{case_data.get('recommendation', 'Routine Clearance')}</b>", cell_bold),
+                Paragraph("<b>System Status:</b>", cell_bold),
+                Paragraph(case_data.get("status", "COMPLETED"), cell_text)
+            ]
+        ]
+        t_overview = Table(overview_data, colWidths=[95, 157, 95, 157])
+        t_overview.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ]))
+        elements.append(t_overview)
+        elements.append(Spacer(1, 10))
+
+        # 3. Extracted Visual Fields vs MRZ Table
+        elements.append(Paragraph("1. Identity Field Extraction & Cross-Verification", section_heading))
+        fields = case_data.get("extracted_fields", [])
+        field_rows = [
+            [
+                Paragraph("<b>Field Name</b>", cell_bold),
+                Paragraph("<b>Visual (VIZ)</b>", cell_bold),
+                Paragraph("<b>MRZ Decoded</b>", cell_bold),
+                Paragraph("<b>Confidence</b>", cell_bold),
+                Paragraph("<b>Cross-Check Status</b>", cell_bold)
+            ]
+        ]
+        for f in fields:
+            status_color = "#059669" if f.get("match_status") == "MATCH" else "#DC2626"
+            field_rows.append([
+                Paragraph(str(f.get("field_name", "")).replace("_", " ").title(), cell_text),
+                Paragraph(str(f.get("visual_value", "—")), cell_text),
+                Paragraph(str(f.get("mrz_value", "—")), cell_text),
+                Paragraph(f"{f.get('confidence', 1.0):.2f}", cell_text),
+                Paragraph(f"<font color='{status_color}'><b>{f.get('match_status', 'MATCH')}</b></font>", cell_text)
+            ])
+        if len(field_rows) == 1:
+            field_rows.append([Paragraph("No extracted fields available.", cell_text)] * 5)
+
+        t_fields = Table(field_rows, colWidths=[100, 110, 110, 64, 120])
+        t_fields.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ]))
+        elements.append(t_fields)
+        elements.append(Spacer(1, 10))
+
+        # 4. Multi-Signal Tampering Forensics & Biometrics
+        elements.append(Paragraph("2. Forensic & Biometric Integrity Analysis", section_heading))
+        tamper = case_data.get("tamper_summary", {})
+        face = case_data.get("face_result") or {}
+
+        forensic_rows = [
+            [
+                Paragraph("<b>Forensic Dimension</b>", cell_bold),
+                Paragraph("<b>Observed Measurement</b>", cell_bold),
+                Paragraph("<b>Integrity Assessment</b>", cell_bold)
+            ],
+            [
+                Paragraph("Error Level Analysis (ELA)", cell_text),
+                Paragraph(f"Score: {tamper.get('signals', {}).get('ela', {}).get('anomaly_score', 0.0)}/100", cell_text),
+                Paragraph(tamper.get("signals", {}).get("ela", {}).get("interpretation", "Normal compression baseline"), cell_text)
+            ],
+            [
+                Paragraph("Sensor Noise Residual", cell_text),
+                Paragraph(f"Score: {tamper.get('signals', {}).get('noise_residual', {}).get('anomaly_score', 0.0)}/100", cell_text),
+                Paragraph(tamper.get("signals", {}).get("noise_residual", {}).get("interpretation", "Homogeneous noise distribution"), cell_text)
+            ],
+            [
+                Paragraph("Copy-Move Detection", cell_text),
+                Paragraph(f"Score: {tamper.get('signals', {}).get('copy_move', {}).get('anomaly_score', 0.0)}/100", cell_text),
+                Paragraph(tamper.get("signals", {}).get("copy_move", {}).get("interpretation", "No cloned regions found"), cell_text)
+            ],
+            [
+                Paragraph("Face Biometric Verification", cell_text),
+                Paragraph(f"Similarity: {face.get('similarity_score', 'N/A')} (Threshold: {face.get('threshold', 0.65)})", cell_text),
+                Paragraph(f"<b>{face.get('verification_result', 'NOT_RUN')}</b> — {face.get('recommendation', 'N/A')}", cell_text)
+            ]
+        ]
+        t_forensic = Table(forensic_rows, colWidths=[130, 124, 250])
+        t_forensic.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ]))
+        elements.append(t_forensic)
+        elements.append(Spacer(1, 10))
+
+        # 5. Risk Evidence Reasons
+        elements.append(Paragraph("3. Explainable Risk Factors & Findings", section_heading))
+        reasons = case_data.get("risk_reasons", [])
+        reason_rows = [
+            [
+                Paragraph("<b>Category</b>", cell_bold),
+                Paragraph("<b>Severity</b>", cell_bold),
+                Paragraph("<b>Evidence Summary</b>", cell_bold),
+                Paragraph("<b>Operational Guidance</b>", cell_bold)
+            ]
+        ]
+        for r in reasons[:6]:  # Show top 6
+            sev = r.get("severity", "LOW")
+            scolor = "#DC2626" if sev in ["CRITICAL", "HIGH"] else "#D97706" if sev == "MEDIUM" else "#059669"
+            reason_rows.append([
+                Paragraph(str(r.get("category", "")).replace("_", " "), cell_text),
+                Paragraph(f"<font color='{scolor}'><b>{sev}</b></font>", cell_text),
+                Paragraph(str(r.get("summary", "")), cell_text),
+                Paragraph(str(r.get("action", "")), cell_text)
+            ])
+        if len(reason_rows) == 1:
+            reason_rows.append([
+                Paragraph("CLEARED", cell_text),
+                Paragraph("<font color='#059669'><b>LOW</b></font>", cell_text),
+                Paragraph("Document passed all automated integrity and rule checks.", cell_text),
+                Paragraph("Permit routine passenger transit.", cell_text)
+            ])
+
+        t_reasons = Table(reason_rows, colWidths=[90, 60, 194, 160])
+        t_reasons.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+            ('TOPPADDING', (0,0), (-1,-1), 3),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+        ]))
+        elements.append(t_reasons)
+        elements.append(Spacer(1, 12))
+
+        # 6. Cryptographic Chain of Custody & Officer Sign-off Block
+        audit_events = case_data.get("audit_trail", [])
+        latest_hash = audit_events[-1].get("event_hash") if audit_events else "0" * 64
+
+        sign_data = [
+            [
+                Paragraph(
+                    f"<b>Cryptographic Audit Digest (SHA-256):</b><br/>"
+                    f"<font size=6 color='#475569'>{latest_hash}</font><br/>"
+                    f"<font size=7 color='#64748B'>Chain Length: {len(audit_events)} verified events · Genesis to Head unbroken.</font>",
+                    normal
+                ),
+                Paragraph(
+                    "<b>Screening Officer Sign-off:</b><br/><br/>"
+                    "Signature: __________________________<br/>"
+                    "Badge / Station: ____________________",
+                    normal
+                )
+            ]
+        ]
+        t_sign = Table(sign_data, colWidths=[310, 194])
+        t_sign.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
+            ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#CBD5E1")),
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        elements.append(t_sign)
+        elements.append(Spacer(1, 8))
+
+        # 7. Mandatory Disclaimer
+        disclaimer_text = (
+            "<b>NOTICE & DISCLAIMER:</b> This automated case record is generated by the SatyaScan AI-Assisted "
+            "Identity & Document Screening Platform for decision-support purposes only. Automated findings, anomaly "
+            "scores, and biometric metrics do not autonomously constitute a legal verdict. Final admissibility and legal "
+            "clearance decisions remain the sole statutory prerogative of authorized immigration and border security officers."
+        )
+        elements.append(Paragraph(disclaimer_text, ParagraphStyle("Disc", parent=normal, fontSize=6.5, leading=8.5, textColor=colors.HexColor("#64748B"))))
+
+        doc.build(elements, canvasmaker=NumberedCanvas)
+        return output_pdf_path

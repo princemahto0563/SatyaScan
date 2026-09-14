@@ -1,0 +1,43 @@
+{
+  "document_type": "VISA",
+  "version": "1.0.0",
+  "authority": "Immigration Bureau Guidelines / Prototype Calibration",
+  "rules": [
+    {
+      "rule_id": "VISA_NUMBER_FORMAT",
+      "name": "Visa Number Syntax",
+      "category": "SYNTAX",
+      "severity": "HIGH",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Standard Border Control Visa Format",
+      "description": "Visa identifier must follow standard alphanumeric prefix and digit sequences."
+    },
+    {
+      "rule_id": "VISA_EXPIRY_CHECK",
+      "name": "Visa Entry Expiry Validation",
+      "category": "VALIDITY",
+      "severity": "CRITICAL",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "Immigration & Nationality Guidelines",
+      "description": "Visa must be currently valid for entry on current date."
+    },
+    {
+      "rule_id": "VISA_STAY_DURATION",
+      "name": "Stay Duration Plausibility",
+      "category": "VALIDITY",
+      "severity": "MEDIUM",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Tourist & Business Visa Category Rules",
+      "description": "Authorized stay duration should not exceed maximum duration for declared visa category."
+    },
+    {
+      "rule_id": "VISA_PASSPORT_CROSS_CHECK",
+      "name": "Passport Linkage Consistency",
+      "category": "CROSS_CHECK",
+      "severity": "CRITICAL",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "Biometric Visa System Specification",
+      "description": "Passport number linked in visa vignette must match physical passport presented."
+    }
+  ]
+}

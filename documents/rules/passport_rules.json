@@ -1,0 +1,79 @@
+{
+  "document_type": "PASSPORT",
+  "version": "1.0.0",
+  "authority": "ICAO Doc 9303 / Prototype Calibration",
+  "rules": [
+    {
+      "rule_id": "MRZ_TD3_FORMAT",
+      "name": "TD3 MRZ Structural Integrity",
+      "category": "MRZ",
+      "severity": "CRITICAL",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "ICAO Doc 9303 Part 4",
+      "description": "Passport must possess 2 lines of 44 alphanumeric characters conforming to OCR-B TD3 standard."
+    },
+    {
+      "rule_id": "MRZ_CHECK_DIGITS",
+      "name": "MRZ Mathematical Check Digits",
+      "category": "MRZ",
+      "severity": "HIGH",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "ICAO Doc 9303 7-3-1 Algorithm",
+      "description": "Document number, Date of Birth, Expiry date, and Composite check digits must evaluate correctly modulo 10."
+    },
+    {
+      "rule_id": "VIZ_MRZ_DOB_MATCH",
+      "name": "Visual vs MRZ Date of Birth Consistency",
+      "category": "CROSS_CHECK",
+      "severity": "CRITICAL",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "ICAO Doc 9303 Section 4.2",
+      "description": "Date of Birth extracted from Visual Inspection Zone (VIZ) must match decoded MRZ Date of Birth."
+    },
+    {
+      "rule_id": "VIZ_MRZ_DOC_NUM_MATCH",
+      "name": "Visual vs MRZ Document Number Consistency",
+      "category": "CROSS_CHECK",
+      "severity": "CRITICAL",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "ICAO Doc 9303 Section 4.2",
+      "description": "Document number extracted from Visual Inspection Zone must match decoded MRZ Document Number."
+    },
+    {
+      "rule_id": "DOCUMENT_NOT_EXPIRED",
+      "name": "Document Expiry Validation",
+      "category": "VALIDITY",
+      "severity": "HIGH",
+      "classification": "OFFICIAL_STANDARD",
+      "standard_ref": "Border Immigration Control Policy",
+      "description": "Passport date of expiry must be strictly after current screening date."
+    },
+    {
+      "rule_id": "DOB_PLAUSIBILITY",
+      "name": "Date of Birth Plausibility",
+      "category": "VALIDITY",
+      "severity": "MEDIUM",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Operational Screening Guidelines",
+      "description": "Holder must be between 0 and 110 years of age at time of screening."
+    },
+    {
+      "rule_id": "VALIDITY_PERIOD_PLAUSIBILITY",
+      "name": "Issue vs Expiry Duration Plausibility",
+      "category": "VALIDITY",
+      "severity": "LOW",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Passport Validity Policy (Typical 5 or 10 years)",
+      "description": "Validity period should typically not exceed 10.5 years from issuance date."
+    },
+    {
+      "rule_id": "WATCHLIST_MATCH",
+      "name": "Border Reference Watchlist Check",
+      "category": "SECURITY",
+      "severity": "CRITICAL",
+      "classification": "PROTOTYPE_RULE",
+      "standard_ref": "Prototype Reference Watchlist",
+      "description": "Document number must not match any flagged or suspended record in the reference watchlist."
+    }
+  ]
+}
