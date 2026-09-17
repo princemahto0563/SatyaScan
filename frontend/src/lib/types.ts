@@ -62,6 +62,8 @@ export interface AuditEvent {
 export interface ScreeningDetail {
   id: string;
   created_at: string;
+  checkpoint_id?: string;
+  checkpoint_name?: string;
   document_type: string;
   masked_document_id: string;
   status: string;
@@ -123,9 +125,33 @@ export interface ScreeningDetail {
   audit_trail: AuditEvent[];
 }
 
+export interface CheckpointInfo {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
+  username: string;
+  role: string;
+  is_active: boolean;
+}
+
+export interface UserSession {
+  id?: number;
+  username: string;
+  full_name: string;
+  badge_number: string;
+  role: string;
+  checkpoint_id?: string | null;
+  checkpoint_name?: string | null;
+  location?: string | null;
+  access_token: string;
+}
+
 export interface ScreeningSummary {
   id: string;
   created_at: string;
+  checkpoint_id?: string;
+  checkpoint_name?: string;
   document_type: string;
   masked_document_id: string;
   status: string;

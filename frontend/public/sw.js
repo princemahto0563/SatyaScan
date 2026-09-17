@@ -1,4 +1,7 @@
 // SatyaScan Lightweight Service Worker for Checkpoint Station Reliability
+// PRIVACY BY DESIGN: Strictly caches UI application shell assets only.
+// NEVER caches sensitive biometrics, document photos, selfies, heatmaps, reports, or API responses.
+
 const CACHE_NAME = "satyascan-v1";
 const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
 
@@ -23,10 +26,26 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  // Let API requests pass straight through to backend
-  if (event.request.url.includes("/api/")) {
-    return;
+  const url = event.request.url;
+
+  // STRICT PRIVACY POLICY: Zero biometric or sensitive document caching
+  if (
+    event.request.method !== "GET" ||
+    url.includes("/api/") ||
+    url.includes("/data/") ||
+    url.includes("/uploads/") ||
+    url.includes("/storage/") ||
+    url.includes("/reports/") ||
+    url.includes("/media/") ||
+    url.includes("selfie") ||
+    url.includes("passport") ||
+    url.includes("heatmap") ||
+    url.includes("pdf")
+  ) {
+    return; // Pass through directly to network/backend; zero offline biometric storage
   }
+
+  // Only serve cached static UI shell assets (HTML, JS, CSS, SVG icons)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       return cachedResponse || fetch(event.request);

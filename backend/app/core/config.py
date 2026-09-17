@@ -10,22 +10,47 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "SatyaScan"
     VERSION: str = "1.0.0"
     API_V1_PREFIX: str = "/api/v1"
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     
-    # Security
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "satyascan_production_sec_key_2026_sih_secure_993817")
+    # Security (HS256 explicit)
+    # In production, configure a 32+ character random secret via the JWT_SECRET environment variable.
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "satyascan_eval_demo_secret_key_change_in_production_2026")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12  # 12 hours
+    STRICT_AUTH: bool = os.getenv("STRICT_AUTH", "false").lower() in ("true", "1", "yes") or os.getenv("ENVIRONMENT", "development") == "production"
     
-    # Database: SQLite by default for zero-config local execution, PostgreSQL when configured
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./satyascan.db")
+    # CORS Origin Whitelist (no wildcard with credentials)
+    CORS_ALLOWED_ORIGINS: str = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000"
+    )
+
+    # In-memory Rate Limiting (per IP per minute)
+    LOGIN_RATE_LIMIT: int = int(os.getenv("LOGIN_RATE_LIMIT", "10"))
+    SCREENING_RATE_LIMIT: int = int(os.getenv("SCREENING_RATE_LIMIT", "20"))
+
+    # File Upload & Image Processing Security Caps
+    MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
+    MAX_IMAGE_DIMENSION: int = 5000               # max width/height in px
+    MAX_IMAGE_PIXELS: int = 25_000_000            # max total pixels (decompression bomb ceiling)
     
-    # Storage Paths
-    BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    STORAGE_DIR: str = os.path.join(BASE_DIR, "storage")
+    # Storage & Root Paths
+    BACKEND_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    PROJECT_ROOT: str = os.path.dirname(BACKEND_DIR)
+    BASE_DIR: str = BACKEND_DIR
+    STORAGE_DIR: str = os.path.join(BACKEND_DIR, "storage")
     UPLOAD_DIR: str = os.path.join(STORAGE_DIR, "uploads")
     HEATMAP_DIR: str = os.path.join(STORAGE_DIR, "heatmaps")
     REPORT_DIR: str = os.path.join(STORAGE_DIR, "reports")
+    DATA_DIR: str = os.path.join(PROJECT_ROOT, "data")
     
+    # Database: SQLite by default for zero-config local execution, PostgreSQL when configured
+    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(PROJECT_ROOT, 'satyascan.db')}")
+    
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [orig.strip() for orig in self.CORS_ALLOWED_ORIGINS.split(",") if orig.strip()]
+
     class Config:
         env_file = ".env"
         extra = "ignore"

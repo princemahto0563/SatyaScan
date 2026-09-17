@@ -217,6 +217,6 @@ print("-" * 110)
 for tr in table_rows:
     print(f"{tr['cid']:<9} {tr['cond']:<35} {tr['score']:4.1f} ({tr['band']:<8}) {tr['face']:<16} {tr['tamper']:<16} {tr['mrz']:<12} {tr['status']}")
 
-print("=============================================================================================================")
-print("ALL 10 DEMO CASES COMPLETED EVALUATION!")
+print("10 / 10 CASES EXECUTED")
+print("All 10 controlled benchmark scenarios completed without pipeline failure. Results are subject to documented dataset limitations; CASE-09 is explicitly excluded from claims of real-world impostor rejection performance.")
 print("=============================================================================================================")

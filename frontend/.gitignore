@@ -40,8 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-cat >> .gitignore <<'EOF'
-
 # Python
 __pycache__/
 *.py[cod]
@@ -59,4 +57,3 @@ backend/storage/reports/
 
 # Local runtime files
 *.log
-EOF

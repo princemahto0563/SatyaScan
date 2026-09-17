@@ -13,6 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 class UserLogin(BaseModel):
     username: str
     password: str
+    checkpoint_id: Optional[str] = None
 
 
 class TokenResponse(BaseModel):
@@ -22,6 +23,9 @@ class TokenResponse(BaseModel):
     username: str
     full_name: str
     badge_number: str
+    checkpoint_id: Optional[str] = None
+    checkpoint_name: Optional[str] = None
+    user: Optional[Dict[str, Any]] = None
 
 
 class UserResponse(BaseModel):
@@ -31,7 +35,23 @@ class UserResponse(BaseModel):
     role: str
     full_name: str
     badge_number: str
+    checkpoint_id: Optional[str] = None
+    checkpoint_name: Optional[str] = None
+    location: Optional[str] = None
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CheckpointResponse(BaseModel):
+    id: str
+    code: str
+    name: str
+    location: str
+    username: str
+    role: str = "OFFICER"
+    is_active: bool = True
 
     class Config:
         from_attributes = True
@@ -114,6 +134,8 @@ class AuditVerificationResult(BaseModel):
 class ScreeningSummaryResponse(BaseModel):
     id: str
     created_at: datetime
+    checkpoint_id: Optional[str] = None
+    checkpoint_name: Optional[str] = None
     document_type: str
     masked_document_id: str
     status: str
@@ -129,6 +151,8 @@ class ScreeningSummaryResponse(BaseModel):
 class ScreeningDetailResponse(BaseModel):
     id: str
     created_at: datetime
+    checkpoint_id: Optional[str] = None
+    checkpoint_name: Optional[str] = None
     document_type: str
     masked_document_id: str
     status: str

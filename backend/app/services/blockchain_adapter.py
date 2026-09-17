@@ -1,21 +1,22 @@
 """
-SatyaScan Blockchain Anchor Adapter
-Provides an optional cryptographic anchoring interface to notarize audit trail root digests
-onto an immutable public or consortium blockchain (e.g. Polygon / Ethereum / Hyperledger).
+SatyaScan Cryptographic Notarization Adapter
+Provides an interface to notarize audit trail root digests via a simulated cryptographic ledger.
 Preserves strict privacy: NEVER publishes PII, images, or raw biometric embeddings to the ledger.
+In the SIH prototype, this generates local verifiable cryptographic receipts.
+In future production deployments, it connects to an external immutable consortium blockchain.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime, timezone
 import hashlib
 
 
 class BlockchainAnchorAdapter:
     """
-    Adapter interface for anchoring audit chain digests to blockchain ledgers.
+    Local Cryptographic Notarization Adapter interface for certifying audit chain digests.
     """
 
-    def __init__(self, network: str = "Ethereum/Polygon Notarization Layer"):
+    def __init__(self, network: str = "Local Cryptographic Notarization Adapter"):
         self.network = network
         self.version = "AnchorAdapter-v1.0"
 
@@ -26,7 +27,7 @@ class BlockchainAnchorAdapter:
         total_events: int
     ) -> Dict[str, Any]:
         """
-        Generates a deterministic anchor receipt certifying the state of the audit trail.
+        Generates a deterministic cryptographic receipt certifying the state of the audit trail.
         In production, this submits a transaction carrying the 32-byte audit_head_hash
         to a smart contract timestamping registry.
         """
@@ -45,5 +46,5 @@ class BlockchainAnchorAdapter:
             "block_number": abs(block_number),
             "timestamp": timestamp.isoformat(),
             "privacy_compliance": "PASSED (Zero PII or biometric data committed to public ledger)",
-            "verification_status": "CONFIRMED_ON_CHAIN_RECEIPT"
+            "verification_status": "CONFIRMED_LOCAL_NOTARIZATION_RECEIPT"
         }

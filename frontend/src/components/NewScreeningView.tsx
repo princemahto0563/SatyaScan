@@ -4,9 +4,9 @@ import React, { useState, useRef, useCallback } from "react";
 import Webcam from "react-webcam";
 import { 
   Upload, Camera, CheckCircle2, AlertCircle, RefreshCw, 
-  ArrowRight, ShieldCheck, Sparkles, User, Image as ImageIcon, Eye
+  ArrowRight, ShieldCheck, User, Image as ImageIcon, Eye, FileText
 } from "lucide-react";
-import { submitScreening } from "../lib/api";
+import { submitScreening, submitPresetScreening, BACKEND_ROOT_URL } from "../lib/api";
 import { ScreeningDetail } from "../lib/types";
 
 interface NewScreeningViewProps {
@@ -19,6 +19,7 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
   const [selfieFile, setSelfieFile] = useState<File | null>(null);
   const [selfiePreview, setSelfiePreview] = useState<string | null>(null);
   const [isWebcamOpen, setIsWebcamOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [documentType, setDocumentType] = useState("PASSPORT");
   
   // Pipeline processing state
@@ -45,6 +46,7 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
       setSelfieFile(file);
       setSelfiePreview(URL.createObjectURL(file));
       setIsWebcamOpen(false);
+      setCameraError(null);
     }
   };
 
@@ -54,7 +56,6 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
       const imageSrc = webcamRef.current.getScreenshot();
       if (imageSrc) {
         setSelfiePreview(imageSrc);
-        // Convert base64 data URL to File object
         fetch(imageSrc)
           .then((res) => res.blob())
           .then((blob) => {
@@ -76,13 +77,13 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
     setIsProcessing(true);
     setErrorMessage(null);
 
-    // Simulate animated pipeline progress steps while the server executes
+    // Timed pipeline progress steps
     setPipelineStep("Evaluating Image Quality Gate...");
-    const t1 = setTimeout(() => setPipelineStep("Running PaddleOCR & Field Normalization..."), 120);
-    const t2 = setTimeout(() => setPipelineStep("Parsing ICAO Doc 9303 TD3 MRZ & 7-3-1 Check Digits..."), 240);
-    const t3 = setTimeout(() => setPipelineStep("Executing Multi-Signal Forensics (ELA Heatmap & Noise Residual)..."), 380);
-    const t4 = setTimeout(() => setPipelineStep("Running Biometric Face Verification & FAISS Search..."), 520);
-    const t5 = setTimeout(() => setPipelineStep("Synthesizing Explainable Risk Factors..."), 650);
+    const t1 = setTimeout(() => setPipelineStep("Running Optical Character Recognition & Field Extraction..."), 150);
+    const t2 = setTimeout(() => setPipelineStep("Parsing ICAO Doc 9303 TD3 MRZ & 7-3-1 Check Digits..."), 300);
+    const t3 = setTimeout(() => setPipelineStep("Executing Multi-Signal Forensics (ELA Heatmap & Sensor Noise)..."), 500);
+    const t4 = setTimeout(() => setPipelineStep("Running Biometric Comparison & Multi-Identity Check..."), 700);
+    const t5 = setTimeout(() => setPipelineStep("Synthesizing Evidence & Calibrating Risk Factors..."), 900);
 
     try {
       const result = await submitScreening(docFile, selfieFile, documentType);
@@ -98,139 +99,82 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
       clearTimeout(t3);
       clearTimeout(t4);
       clearTimeout(t5);
-      setErrorMessage(err.message || "Screening service returned an error. Please try again.");
+      setErrorMessage(err.message || "Screening service returned an error. Please verify backend availability.");
     } finally {
       setIsProcessing(false);
       setPipelineStep("");
     }
   };
 
-  // Helper to load synthetic demo presets directly from server/disk for quick demonstration
-  const loadPresetCase = async (caseNum: string) => {
-    setErrorMessage(null);
-    setIsProcessing(true);
-    setPipelineStep(`Loading Synthetic Benchmark Case ${caseNum}...`);
-
-    try {
-      let docUrl = "";
-      let selfieUrl = "";
-      let docName = "";
-      let selfieName = "";
-
-      switch (caseNum) {
-        case "01": // Genuine Arjun
-          docUrl = "/api/v1/screenings/media/case01_doc";
-          selfieUrl = "/api/v1/screenings/media/case01_selfie";
-          docName = "case01_genuine_arjun.jpg";
-          selfieName = "case01_selfie_arjun.jpg";
-          break;
-        case "02": // Expired
-          docUrl = "/api/v1/screenings/media/case02_doc";
-          docName = "case02_expired_ravi.jpg";
-          break;
-        case "03": // Tampered DOB
-          docUrl = "/api/v1/screenings/media/case03_doc";
-          docName = "case03_tampered_dob.jpg";
-          break;
-        case "04": // Photo Replaced
-          docUrl = "/api/v1/screenings/media/case04_doc";
-          selfieUrl = "/api/v1/screenings/media/case01_selfie";
-          docName = "case04_photo_replaced.jpg";
-          selfieName = "case01_selfie_arjun.jpg";
-          break;
-        case "05": // Copy-Move Stamp
-          docUrl = "/api/v1/screenings/media/case05_doc";
-          docName = "case05_copymove_stamp.jpg";
-          break;
-        case "06": // Multi-Identity
-          docUrl = "/api/v1/screenings/media/case06_doc";
-          selfieUrl = "/api/v1/screenings/media/case01_selfie";
-          docName = "case06_multi_identity.jpg";
-          selfieName = "case01_selfie_arjun.jpg";
-          break;
-        case "07": // Blurry
-          docUrl = "/api/v1/screenings/media/case07_doc";
-          docName = "case07_blurry_fail.jpg";
-          break;
-        case "08": // Appearance Change (Beard)
-          docUrl = "/api/v1/screenings/media/case01_doc";
-          selfieUrl = "/api/v1/screenings/media/case08_selfie";
-          docName = "case01_genuine_arjun.jpg";
-          selfieName = "case08_selfie_bearded_arjun.jpg";
-          break;
-        case "09": // Imposter
-          docUrl = "/api/v1/screenings/media/case01_doc";
-          selfieUrl = "/api/v1/screenings/media/case09_selfie";
-          docName = "case01_genuine_arjun.jpg";
-          selfieName = "case09_selfie_imposter.jpg";
-          break;
-      }
-
-      // Fetch file blobs directly from data folder via backend or fallbacks
-      // For instant robustness, create simulated mock blobs from synthetic generator
-      const mockDocBlob = await fetch(
-        `/api/v1/screenings/media/seed/${docName}`
-      ).catch(() => null);
-
-      // Submit screening directly with case metadata
-      const res = await fetch(`http://localhost:8000/api/v1/screenings`, {
-        method: "POST",
-        body: (() => {
-          const fd = new FormData();
-          return fd;
-        })()
-      }).catch(() => null);
-
-    } catch (e: any) {
-      console.warn("Preset fast-load fallback:", e);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
   const presetCases = [
-    { num: "01", label: "Genuine Passport", desc: "Clean ICAO MRZ, Low Risk", color: "border-emerald-500/40 text-emerald-400 bg-emerald-500/5", path: "/data/genuine/case01_genuine_arjun.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "02", label: "Expired Document", desc: "Expired in 2022, High Flag", color: "border-amber-500/40 text-amber-400 bg-amber-500/5", path: "/data/tampered/case02_expired_ravi.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "03", label: "DOB Modified", desc: "Visual DOB 2002 vs MRZ 1990", color: "border-rose-500/40 text-rose-400 bg-rose-500/5", path: "/data/tampered/case03_tampered_dob.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "04", label: "Photo Replaced", desc: "Spliced Face + ELA Anomaly", color: "border-red-500/40 text-red-400 bg-red-500/5", path: "/data/tampered/case04_photo_replaced.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "05", label: "Cloned Stamp", desc: "Copy-Move ORB Duplication", color: "border-purple-500/40 text-purple-400 bg-purple-500/5", path: "/data/tampered/case05_copymove_stamp.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "06", label: "Multi-Identity", desc: "Same Face, Different Name", color: "border-cyan-500/40 text-cyan-400 bg-cyan-500/5", path: "/data/genuine/case06_multi_identity.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "07", label: "Poor Quality", desc: "Excessive Blur, Fails Gate", color: "border-slate-500/40 text-slate-400 bg-slate-500/5", path: "/data/tampered/case07_blurry_fail.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
-    { num: "08", label: "Beard Appearance", desc: "Identity Matches, Beard Noted", color: "border-teal-500/40 text-teal-400 bg-teal-500/5", path: "/data/genuine/case01_genuine_arjun.jpg", selfie: "/data/selfies/case08_selfie_bearded_arjun.jpg" },
-    { num: "09", label: "Impersonation", desc: "Different Face, Low Similarity", color: "border-rose-600/40 text-rose-300 bg-rose-600/5", path: "/data/genuine/case01_genuine_arjun.jpg", selfie: "/data/selfies/case09_selfie_imposter.jpg" },
+    { num: "01", label: "Genuine Passport", desc: "Valid ICAO MRZ, Low Risk", color: "border-emerald-300 dark:border-emerald-500/40 text-emerald-800 dark:text-emerald-400 bg-emerald-50/50 dark:bg-emerald-500/5", path: "/data/genuine/case01_genuine_arjun.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "02", label: "Expired Document", desc: "Expired in 2022, Validity Flag", color: "border-amber-300 dark:border-amber-500/40 text-amber-800 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-500/5", path: "/data/tampered/case02_expired_ravi.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "03", label: "DOB Altered", desc: "Visual DOB 2002 vs MRZ 1990", color: "border-rose-300 dark:border-rose-500/40 text-rose-800 dark:text-rose-400 bg-rose-50/50 dark:bg-rose-500/5", path: "/data/tampered/case03_tampered_dob.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "04", label: "Photo Replaced", desc: "Spliced Face + ELA Anomaly", color: "border-red-300 dark:border-red-500/40 text-red-800 dark:text-red-400 bg-red-50/50 dark:bg-red-500/5", path: "/data/tampered/case04_photo_replaced.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "05", label: "Cloned Stamp", desc: "Copy-Move Duplicate Elements", color: "border-purple-300 dark:border-purple-500/40 text-purple-800 dark:text-purple-400 bg-purple-50/50 dark:bg-purple-500/5", path: "/data/tampered/case05_copymove_stamp.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "06", label: "Multi-Identity", desc: "Same Face, Different Name Record", color: "border-cyan-300 dark:border-cyan-500/40 text-cyan-800 dark:text-cyan-400 bg-cyan-50/50 dark:bg-cyan-500/5", path: "/data/genuine/case06_multi_identity.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "07", label: "Degraded Quality", desc: "Severe Blur, Fails Quality Gate", color: "border-slate-300 dark:border-slate-500/40 text-slate-700 dark:text-slate-400 bg-slate-100/50 dark:bg-slate-500/5", path: "/data/tampered/case07_blurry_fail.jpg", selfie: "/data/selfies/case01_selfie_arjun.jpg" },
+    { num: "08", label: "Appearance Variation", desc: "Identity Matches, Beard Recorded", color: "border-teal-300 dark:border-teal-500/40 text-teal-800 dark:text-teal-400 bg-teal-50/50 dark:bg-teal-500/5", path: "/data/genuine/case01_genuine_arjun.jpg", selfie: "/data/selfies/case08_selfie_bearded_arjun.jpg" },
+    { num: "09", label: "Impersonation", desc: "Different Subject vs Document Photo", color: "border-rose-400 dark:border-rose-600/40 text-rose-900 dark:text-rose-300 bg-rose-50/50 dark:bg-rose-600/5", path: "/data/genuine/case01_genuine_arjun.jpg", selfie: "/data/selfies/case09_selfie_imposter.jpg" },
   ];
 
-  const handleSelectPreset = async (preset: typeof presetCases[0]) => {
+  // Execute screening for one of the controlled test cases
+  const handlePresetClick = async (preset: typeof presetCases[0]) => {
     setIsProcessing(true);
-    setPipelineStep(`Loading synthetic test preset ${preset.num}: ${preset.label}...`);
+    setErrorMessage(null);
+    setPipelineStep(`Evaluating Case ${preset.num} (${preset.label})...`);
+
+    const docUrl = `${BACKEND_ROOT_URL}${preset.path}`;
+    const selfieUrl = preset.selfie ? `${BACKEND_ROOT_URL}${preset.selfie}` : null;
+    setDocPreview(docUrl);
+    setSelfiePreview(selfieUrl);
+
+    fetch(docUrl)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (blob) {
+          const fname = preset.path.split("/").pop() || "doc.jpg";
+          setDocFile(new File([blob], fname, { type: "image/jpeg" }));
+        }
+      })
+      .catch(() => {});
+
+    if (selfieUrl) {
+      fetch(selfieUrl)
+        .then((r) => (r.ok ? r.blob() : null))
+        .then((blob) => {
+          if (blob) {
+            const sname = preset.selfie.split("/").pop() || "selfie.jpg";
+            setSelfieFile(new File([blob], sname, { type: "image/jpeg" }));
+          }
+        })
+        .catch(() => {});
+    }
+
+    const t1 = setTimeout(() => setPipelineStep("Evaluating Image Quality Gate..."), 150);
+    const t2 = setTimeout(() => setPipelineStep("Running Optical Character Recognition & Field Extraction..."), 350);
+    const t3 = setTimeout(() => setPipelineStep("Parsing ICAO Doc 9303 TD3 MRZ & 7-3-1 Check Digits..."), 600);
+    const t4 = setTimeout(() => setPipelineStep("Executing Multi-Signal Forensics (ELA Heatmap & Noise Residual)..."), 850);
+    const t5 = setTimeout(() => setPipelineStep("Running Biometric Comparison & Multi-Identity Check..."), 1100);
+    const t6 = setTimeout(() => setPipelineStep("Synthesizing Evidence & Calibrating Risk Factors..."), 1400);
+
     try {
-      // Fetch document image from local public / API asset endpoint
-      // We can create standard simulated file objects from the known local filenames
-      const resDoc = await fetch(`http://localhost:8000${preset.path}`).catch(() => null);
-      // As a reliable alternative, upload via standard file input or test file
-      const docBlob = await fetch(`http://localhost:8000/api/v1/screenings/media/raw?path=${encodeURIComponent(preset.path)}`)
-        .then(r => r.blob())
-        .catch(() => null);
-
-      // If direct fetch is ready, submit. Otherwise simulate file selection.
-      const simulatedFile = new File([new Blob(["test"], { type: "image/jpeg" })], preset.path.split("/").pop() || "doc.jpg", { type: "image/jpeg" });
-      setDocFile(simulatedFile);
-      setDocPreview(`http://localhost:8000${preset.path}`);
-
-      if (preset.selfie) {
-        const selfieSim = new File([new Blob(["selfie"], { type: "image/jpeg" })], preset.selfie.split("/").pop() || "selfie.jpg", { type: "image/jpeg" });
-        setSelfieFile(selfieSim);
-        setSelfiePreview(`http://localhost:8000${preset.selfie}`);
-      }
-
-      // Automatically execute pipeline for judges
-      setPipelineStep("Executing screening on selected synthetic document...");
-      const formData = new FormData();
-      // Use standard fetch
-      const postData = new FormData();
-      // Send path hint or mock upload
-    } catch (e) {
-      console.error(e);
+      const result = await submitPresetScreening(preset.num);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+      clearTimeout(t6);
+      onScreeningCompleted(result);
+    } catch (err: any) {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
+      clearTimeout(t6);
+      setErrorMessage(err.message || "Screening service failed. Please verify backend availability.");
     } finally {
       setIsProcessing(false);
       setPipelineStep("");
@@ -239,23 +183,25 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 shadow-lg backdrop-blur">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+      
+      {/* Header Section */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold text-white tracking-tight flex items-center space-x-2">
-              <span>Automated Document Screening Workstation</span>
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
+              <span>Document Verification Workstation</span>
             </h1>
-            <p className="mt-1 text-xs text-slate-400">
-              Upload a travel document (Passport, Visa) and optional live webcam selfie for end-to-end multi-signal forensic verification.
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+              Submit a travel document (Passport, Visa) and optional live webcam capture for automated validation, forensic examination, and identity cross-verification.
             </p>
           </div>
+          
           <div className="flex items-center space-x-2">
-            <span className="text-xs text-slate-400 font-medium">Document Type:</span>
+            <span className="text-xs text-slate-600 dark:text-slate-400 font-medium">Document Type:</span>
             <select
               value={documentType}
               onChange={(e) => setDocumentType(e.target.value)}
-              className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-teal-400 focus:outline-none focus:border-teal-500"
+              className="rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-3 py-1.5 text-xs font-semibold text-teal-700 dark:text-teal-400 focus:outline-none focus:border-teal-600"
             >
               <option value="PASSPORT">Passport (ICAO TD3)</option>
               <option value="VISA">Visa Vignette</option>
@@ -265,45 +211,33 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
         </div>
       </div>
 
-      {/* 9 Canonical Synthetic Presets for SIH Judges Demo */}
-      <div className="rounded-xl border border-slate-800/80 bg-slate-900/40 p-4 shadow-sm">
+      {/* Controlled Verification Test Suite Presets */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800/80 bg-white dark:bg-slate-900/40 p-4 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center space-x-2">
-            <Sparkles className="h-4 w-4 text-teal-400" />
-            <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-              One-Click Synthetic Demo Presets (SIH Judge Test Suite)
+            <FileText className="h-4 w-4 text-teal-700 dark:text-teal-400" />
+            <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+              Controlled Verification Test Suite
             </span>
           </div>
-          <span className="text-[11px] text-slate-400 font-mono">9 CONTROLLED CASES</span>
+          <span className="text-[11px] text-slate-500 font-mono">9 BENCHMARK CASES</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
           {presetCases.map((p) => (
             <button
               key={p.num}
-              onClick={() => {
-                // Direct call to submit screening with preset path
-                setIsProcessing(true);
-                setPipelineStep(`Running Case ${p.num} (${p.label})...`);
-                // Call backend benchmark endpoint or execute via fetch
-                fetch(`http://localhost:8000/api/v1/screenings`, {
-                  method: "POST",
-                  body: (() => {
-                    const fd = new FormData();
-                    // We can read file from local API
-                    return fd;
-                  })()
-                });
-              }}
-              className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all hover:scale-[1.02] active:scale-[0.99] ${p.color}`}
+              onClick={() => handlePresetClick(p)}
+              disabled={isProcessing}
+              className={`flex flex-col items-start p-2.5 rounded-lg border text-left transition-all hover:shadow-sm disabled:opacity-60 disabled:cursor-not-allowed ${p.color}`}
             >
               <div className="flex items-center justify-between w-full">
                 <span className="text-xs font-bold font-mono">CASE {p.num}</span>
-                <span className="text-[10px] uppercase font-semibold px-1.5 py-0.2 rounded bg-slate-800/60">
+                <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-800/80">
                   {p.label}
                 </span>
               </div>
-              <span className="text-[11px] text-slate-300 mt-1">{p.desc}</span>
+              <span className="text-[11px] text-slate-600 dark:text-slate-300 mt-1">{p.desc}</span>
             </button>
           ))}
         </div>
@@ -311,35 +245,38 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
 
       {/* Upload and Capture Dual-Pane */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
         {/* Pane 1: Document Upload */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 flex flex-col justify-between space-y-4">
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-5 flex flex-col justify-between space-y-4 shadow-sm">
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-white flex items-center space-x-2">
-                <ImageIcon className="h-4 w-4 text-teal-400" />
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-semibold text-slate-900 dark:text-white flex items-center space-x-2">
+                <ImageIcon className="h-4 w-4 text-teal-600 dark:text-teal-400" />
                 <span>Step 1: Travel Document Image</span>
               </span>
-              <span className="text-[11px] text-slate-400 font-mono">MANDATORY</span>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 font-mono uppercase bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">
+                MANDATORY
+              </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Provide high-resolution capture of passport biodata page or visa stamp.
+            <p className="text-xs text-slate-600 dark:text-slate-400">
+              Provide clear image capture of passport biodata page or visa stamp.
             </p>
           </div>
 
-          <div className="relative border-2 border-dashed border-slate-700 hover:border-teal-500/60 rounded-xl p-4 transition text-center flex flex-col items-center justify-center min-h-[220px] bg-slate-950/40">
+          <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-teal-500 rounded-xl p-4 transition text-center flex flex-col items-center justify-center min-h-[220px] bg-slate-50 dark:bg-slate-950/40">
             {docPreview ? (
               <div className="relative w-full flex flex-col items-center">
                 <img
                   src={docPreview}
                   alt="Document Preview"
-                  className="max-h-48 rounded-lg object-contain shadow-md border border-slate-700"
+                  className="max-h-44 rounded-lg object-contain shadow-sm border border-slate-200 dark:border-slate-700"
                 />
                 <div className="mt-3 flex items-center space-x-2">
-                  <span className="text-xs text-emerald-400 font-medium flex items-center space-x-1">
+                  <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium flex items-center space-x-1">
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     <span>{docFile?.name || "Document Loaded"}</span>
                   </span>
-                  <label className="text-xs text-slate-400 hover:text-white cursor-pointer underline">
+                  <label className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer underline">
                     Change
                     <input type="file" accept="image/*" onChange={handleDocChange} className="hidden" />
                   </label>
@@ -347,11 +284,15 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
               </div>
             ) : (
               <label className="cursor-pointer flex flex-col items-center justify-center space-y-2 p-6 w-full">
-                <div className="rounded-full bg-slate-800 p-3 text-teal-400">
+                <div className="rounded-full bg-slate-100 dark:bg-slate-800 p-3 text-teal-600 dark:text-teal-400">
                   <Upload className="h-6 w-6" />
                 </div>
-                <span className="text-sm font-semibold text-slate-200">Click to upload document photo</span>
-                <span className="text-xs text-slate-500">Supports JPG, PNG, WEBP (Max 10MB)</span>
+                <span className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                  Click to select document image
+                </span>
+                <span className="text-xs text-slate-500">
+                  Supports JPG, PNG, WEBP (Max 10MB)
+                </span>
                 <input type="file" accept="image/*" onChange={handleDocChange} className="hidden" />
               </label>
             )}
@@ -359,44 +300,49 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
         </div>
 
         {/* Pane 2: Live Selfie / Webcam Capture */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 flex flex-col justify-between space-y-4">
+        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-5 flex flex-col justify-between space-y-4 shadow-sm">
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-white flex items-center space-x-2">
-                <Camera className="h-4 w-4 text-cyan-400" />
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-semibold text-slate-900 dark:text-white flex items-center space-x-2">
+                <Camera className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
                 <span>Step 2: Live Facial Capture</span>
               </span>
-              <span className="text-[11px] text-teal-400 font-mono">RECOMMENDED</span>
+              <span className="text-[10px] font-bold text-teal-700 dark:text-teal-400 font-mono uppercase bg-teal-50 dark:bg-teal-950/60 px-1.5 py-0.5 rounded">
+                RECOMMENDED
+              </span>
             </div>
-            <p className="text-xs text-slate-400">
-              Live webcam capture for 1:1 biometric owner verification & multi-identity search.
+            <p className="text-xs text-slate-600 dark:text-slate-400">
+              Live camera capture for 1:1 biometric identity comparison & duplicate identity search.
             </p>
           </div>
 
-          <div className="relative border-2 border-dashed border-slate-700 rounded-xl p-4 transition text-center flex flex-col items-center justify-center min-h-[220px] bg-slate-950/40">
+          <div className="relative border-2 border-dashed border-slate-300 dark:border-slate-700 rounded-xl p-4 transition text-center flex flex-col items-center justify-center min-h-[220px] bg-slate-50 dark:bg-slate-950/40">
             {isWebcamOpen ? (
               <div className="relative w-full flex flex-col items-center">
-                <div className="relative rounded-lg overflow-hidden border border-slate-700 shadow-md max-w-[280px]">
+                <div className="relative rounded-lg overflow-hidden border border-slate-300 dark:border-slate-700 shadow-md max-w-[280px]">
                   <Webcam
                     audio={false}
                     ref={webcamRef}
                     screenshotFormat="image/jpeg"
                     videoConstraints={{ width: 400, height: 400, facingMode: "user" }}
+                    onUserMediaError={() => {
+                      setIsWebcamOpen(false);
+                      setCameraError("Camera unavailable. You can upload a captured image instead.");
+                    }}
                     className="w-full h-auto"
                   />
-                  {/* Facial framing oval guide */}
-                  <div className="absolute inset-0 border-2 border-cyan-400/40 rounded-full m-4 pointer-events-none"></div>
+                  <div className="absolute inset-0 border-2 border-cyan-500/40 rounded-full m-4 pointer-events-none"></div>
                 </div>
                 <div className="mt-3 flex items-center space-x-3">
                   <button
                     onClick={captureWebcamSelfie}
-                    className="rounded-lg bg-cyan-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-cyan-500 shadow transition"
+                    className="rounded-lg bg-teal-700 dark:bg-teal-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-teal-800 shadow transition"
                   >
                     Snap Photo
                   </button>
                   <button
                     onClick={() => setIsWebcamOpen(false)}
-                    className="text-xs text-slate-400 hover:text-white"
+                    className="text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                   >
                     Cancel
                   </button>
@@ -407,16 +353,16 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
                 <img
                   src={selfiePreview}
                   alt="Selfie Preview"
-                  className="max-h-48 rounded-lg object-contain shadow-md border border-slate-700"
+                  className="max-h-44 rounded-lg object-contain shadow-sm border border-slate-200 dark:border-slate-700"
                 />
                 <div className="mt-3 flex items-center space-x-3">
-                  <span className="text-xs text-emerald-400 font-medium flex items-center space-x-1">
+                  <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium flex items-center space-x-1">
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    <span>Live Selfie Ready</span>
+                    <span>Live Capture Ready</span>
                   </span>
                   <button
                     onClick={() => setIsWebcamOpen(true)}
-                    className="text-xs text-cyan-400 hover:text-cyan-300 underline"
+                    className="text-xs text-teal-700 dark:text-teal-400 hover:underline"
                   >
                     Retake
                   </button>
@@ -424,22 +370,30 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center space-y-3 p-4">
-                <div className="flex items-center space-x-3">
+                {cameraError && (
+                  <div className="text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2 rounded-lg max-w-sm mb-1">
+                    {cameraError}
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center justify-center gap-2">
                   <button
-                    onClick={() => setIsWebcamOpen(true)}
-                    className="flex items-center space-x-2 rounded-lg bg-slate-800 px-4 py-2.5 text-xs font-semibold text-cyan-300 hover:bg-slate-700 border border-slate-700 transition"
+                    onClick={() => {
+                      setCameraError(null);
+                      setIsWebcamOpen(true);
+                    }}
+                    className="flex items-center space-x-2 rounded-lg bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 transition"
                   >
-                    <Camera className="h-4 w-4 text-cyan-400" />
-                    <span>Open Live Camera</span>
+                    <Camera className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                    <span>Open Camera</span>
                   </button>
-                  <label className="flex items-center space-x-2 rounded-lg bg-slate-800/80 px-4 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700 border border-slate-700 cursor-pointer transition">
-                    <Upload className="h-4 w-4 text-slate-400" />
+                  <label className="flex items-center space-x-2 rounded-lg bg-slate-100 dark:bg-slate-800 px-3.5 py-2 text-xs font-semibold text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 cursor-pointer transition">
+                    <Upload className="h-4 w-4 text-slate-500" />
                     <span>Upload Image</span>
                     <input type="file" accept="image/*" onChange={handleSelfieChange} className="hidden" />
                   </label>
                 </div>
                 <span className="text-[11px] text-slate-500">
-                  Optional for document-only verification; mandatory for imposter screening.
+                  Optional for document-only verification; recommended for identity comparison.
                 </span>
               </div>
             )}
@@ -449,28 +403,32 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
 
       {/* Error Alert if any */}
       {errorMessage && (
-        <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 flex items-center space-x-3 text-rose-300 text-xs shadow-md">
-          <AlertCircle className="h-5 w-5 text-rose-400 flex-shrink-0" />
+        <div className="rounded-xl border border-rose-300 dark:border-rose-900/60 bg-rose-50 dark:bg-rose-950/40 p-4 flex items-center space-x-3 text-rose-800 dark:text-rose-200 text-xs shadow-sm">
+          <AlertCircle className="h-5 w-5 text-rose-600 dark:text-rose-400 flex-shrink-0" />
           <span>{errorMessage}</span>
         </div>
       )}
 
-      {/* Pipeline Stepper & Execute Button */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      {/* Verification Stepper & Execute Button */}
+      <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60 p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 shadow-sm">
         <div>
           {isProcessing ? (
             <div className="flex items-center space-x-3">
-              <RefreshCw className="h-5 w-5 text-teal-400 animate-spin" />
+              <RefreshCw className="h-5 w-5 text-teal-600 dark:text-teal-400 animate-spin" />
               <div>
-                <span className="text-sm font-semibold text-white">AI Screening Pipeline In Progress...</span>
-                <p className="text-xs text-teal-300/80 font-mono mt-0.5">{pipelineStep}</p>
+                <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                  Document Screening Verification In Progress...
+                </span>
+                <p className="text-xs text-teal-700 dark:text-teal-300 font-mono mt-0.5">{pipelineStep}</p>
               </div>
             </div>
           ) : (
             <div>
-              <span className="text-sm font-semibold text-white">Ready for Verification</span>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Will execute Quality Gate, OCR, ICAO 7-3-1 Checksums, ELA Forensics, and 512-d Face biometrics.
+              <span className="text-sm font-semibold text-slate-900 dark:text-white">
+                Ready for Verification
+              </span>
+              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                Executes Image Quality Assessment, OCR, ICAO 7-3-1 Check Digits, Forensic Integrity Signals, and Biometric Comparison.
               </p>
             </div>
           )}
@@ -479,10 +437,10 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
         <button
           onClick={runScreening}
           disabled={isProcessing || !docFile}
-          className={`flex items-center justify-center space-x-2 rounded-xl px-6 py-3 text-sm font-bold shadow-lg transition-all ${
+          className={`flex items-center justify-center space-x-2 rounded-xl px-6 py-2.5 text-sm font-bold shadow-sm transition-all ${
             isProcessing || !docFile
-              ? "bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700"
-              : "bg-teal-600 text-white hover:bg-teal-500 shadow-teal-600/30 hover:scale-[1.02]"
+              ? "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed border border-slate-300 dark:border-slate-700"
+              : "bg-teal-700 dark:bg-teal-600 text-white hover:bg-teal-800 dark:hover:bg-teal-500 hover:scale-[1.01]"
           }`}
         >
           <span>Initiate Full Screening</span>

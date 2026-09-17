@@ -49,14 +49,19 @@ class OCREngine:
         """
         if isinstance(image_input, str):
             if not os.path.exists(image_input):
-                return {"error": "Image file not found", "fields": {}, "lines": []}
+                return {"error": "Image file not found", "fields": {}, "lines": [], "extracted_fields": {}, "raw_lines": [], "mrz_candidate_lines": []}
             cv_img = cv2.imread(image_input)
-            pil_img = Image.open(image_input)
+            if cv_img is None:
+                return {"error": "Unable to decode image file", "fields": {}, "lines": [], "extracted_fields": {}, "raw_lines": [], "mrz_candidate_lines": []}
+            try:
+                pil_img = Image.open(image_input)
+            except Exception:
+                pil_img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
         elif isinstance(image_input, np.ndarray):
             cv_img = image_input
             pil_img = Image.fromarray(cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB))
         else:
-            return {"error": "Invalid image input", "fields": {}, "lines": []}
+            return {"error": "Invalid image input", "fields": {}, "lines": [], "extracted_fields": {}, "raw_lines": [], "mrz_candidate_lines": []}
 
         self._init_paddle()
 

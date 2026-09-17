@@ -6,7 +6,7 @@ Supports SQLite for zero-config local execution and PostgreSQL for cloud deploym
 from datetime import datetime, timezone
 import json
 from sqlalchemy import (
-    create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean
+    create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from backend.app.core.config import settings
@@ -24,10 +24,26 @@ class User(Base):
     role = Column(String(20), default="OFFICER")  # OFFICER, SUPERVISOR, ADMIN
     full_name = Column(String(100), nullable=False)
     badge_number = Column(String(30), nullable=False)
+    checkpoint_id = Column(String(50), nullable=True)     # e.g. "CP-DEL-AIR"
+    checkpoint_name = Column(String(100), nullable=True) # e.g. "Delhi Airport Immigration Checkpoint"
+    location = Column(String(100), nullable=True)        # e.g. "Delhi"
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     screenings = relationship("Screening", back_populates="operator")
+
+
+class Checkpoint(Base):
+    __tablename__ = "checkpoints"
+
+    id = Column(String(50), primary_key=True, index=True)  # e.g. "CP-DEL-AIR"
+    code = Column(String(50), unique=True, index=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    location = Column(String(100), nullable=False)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    role = Column(String(20), default="OFFICER")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class Screening(Base):
@@ -36,6 +52,8 @@ class Screening(Base):
     id = Column(String(50), primary_key=True, index=True)  # SAT-2026-XXXX
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    checkpoint_id = Column(String(50), nullable=True)
+    checkpoint_name = Column(String(100), nullable=True)
     document_type = Column(String(30), default="PASSPORT")
     masked_document_id = Column(String(30), nullable=False)
     status = Column(String(30), default="COMPLETED")  # COMPLETED, MANUAL_REVIEW_REQUIRED, CLEARED, ESCALATED
@@ -136,7 +154,7 @@ class AuditEvent(Base):
     __tablename__ = "audit_events"
 
     id = Column(Integer, primary_key=True, index=True)
-    screening_id = Column(String(50), ForeignKey("screenings.id"), nullable=False, index=True)
+    screening_id = Column(String(50), ForeignKey("screenings.id"), nullable=True, index=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     actor = Column(String(100), default="SYSTEM_AUTOMATION")
     event_type = Column(String(50), nullable=False)
@@ -162,14 +180,44 @@ class ReferenceWatchlist(Base):
 
 
 # Engine and Session initialization
-connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
-engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
+from sqlalchemy.pool import NullPool
+
+is_sqlite = "sqlite" in settings.DATABASE_URL
+connect_args = {"check_same_thread": False, "timeout": 30} if is_sqlite else {}
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args=connect_args,
+    poolclass=NullPool if is_sqlite else None
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    """Initializes all database tables."""
+    """Initializes all database tables and ensures schema consistency for checkpoints."""
     Base.metadata.create_all(bind=engine)
+    if is_sqlite:
+        with engine.connect() as conn:
+            try:
+                # Migrate users table columns if missing
+                res = conn.execute(text("PRAGMA table_info(users)")).fetchall()
+                user_cols = {row[1] for row in res}
+                if "checkpoint_id" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN checkpoint_id VARCHAR(50)"))
+                if "checkpoint_name" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN checkpoint_name VARCHAR(100)"))
+                if "location" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN location VARCHAR(100)"))
+
+                # Migrate screenings table columns if missing
+                res_sc = conn.execute(text("PRAGMA table_info(screenings)")).fetchall()
+                sc_cols = {row[1] for row in res_sc}
+                if "checkpoint_id" not in sc_cols:
+                    conn.execute(text("ALTER TABLE screenings ADD COLUMN checkpoint_id VARCHAR(50)"))
+                if "checkpoint_name" not in sc_cols:
+                    conn.execute(text("ALTER TABLE screenings ADD COLUMN checkpoint_name VARCHAR(100)"))
+                conn.commit()
+            except Exception:
+                pass
 
 
 def get_db():

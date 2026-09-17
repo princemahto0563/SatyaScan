@@ -10,14 +10,18 @@ from sqlalchemy import func
 from datetime import datetime, timezone, timedelta
 
 from backend.app.models.database import (
-    get_db, Screening, TamperFinding, IdentityMatch, ValidationFinding
+    get_db, Screening, TamperFinding, IdentityMatch, ValidationFinding, User
 )
+from backend.app.core.security import get_current_user
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
 @router.get("")
-def get_checkpoint_analytics(db: Session = Depends(get_db)):
+def get_checkpoint_analytics(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """
     Computes genuine operational metrics from screening history.
     """

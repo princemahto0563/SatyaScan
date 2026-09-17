@@ -10,8 +10,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=sqlite:///./satyascan.db
-      - JWT_SECRET=satyascan_production_sec_key_2026_sih_secure_993817
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./satyascan.db}
+      - JWT_SECRET=${JWT_SECRET:-satyascan_eval_demo_secret_key_change_in_production_2026}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - ENVIRONMENT=${ENVIRONMENT:-development}
     volumes:
       - backend-storage:/app/storage
     healthcheck:

@@ -13,7 +13,11 @@ from datetime import datetime, timezone
 import json
 import cv2
 import numpy as np
+import logging
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger("satyascan.orchestrator")
 
 from backend.app.core.config import settings
 from backend.app.core.security import mask_document_number, mask_full_name, mask_date_of_birth
@@ -75,18 +79,86 @@ class ScreeningOrchestrator:
         doc_image_path: str,
         live_image_path: Optional[str] = None,
         operator_id: Optional[int] = None,
-        doc_type: str = "PASSPORT"
+        doc_type: str = "PASSPORT",
+        checkpoint_id: Optional[str] = None,
+        checkpoint_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Executes end-to-end screening workflow.
+        Executes end-to-end screening workflow with robust exception handling and guaranteed terminal state.
         """
         start_time = time.time()
         screening_id = f"SAT-2026-{uuid.uuid4().hex[:8].upper()}"
 
+        try:
+            return self._execute_pipeline(
+                db=db,
+                screening_id=screening_id,
+                start_time=start_time,
+                doc_image_path=doc_image_path,
+                live_image_path=live_image_path,
+                operator_id=operator_id,
+                doc_type=doc_type,
+                checkpoint_id=checkpoint_id,
+                checkpoint_name=checkpoint_name
+            )
+        except Exception as exc:
+            db.rollback()
+            latency_ms = round((time.time() - start_time) * 1000.0, 1)
+            error_msg = str(exc)
+            logger.error(f"[SatyaScan Screening] Pipeline failure for {screening_id}: {exc}", exc_info=True)
+
+            try:
+                fail_rec = Screening(
+                    id=screening_id,
+                    operator_id=operator_id,
+                    checkpoint_id=checkpoint_id,
+                    checkpoint_name=checkpoint_name,
+                    document_type=doc_type,
+                    masked_document_id="UNKNOWN",
+                    status="FAILED",
+                    risk_score=75.0,
+                    risk_band="HIGH",
+                    recommendation="Screening could not be completed due to an internal processing error. Manual inspection required.",
+                    doc_image_path=doc_image_path,
+                    live_image_path=live_image_path,
+                    execution_latency_ms=latency_ms
+                )
+                db.add(fail_rec)
+                AuditService.record_event(
+                    db, screening_id, "SCREENING_FAILED",
+                    {"status": "FAILED", "code": "PIPELINE_ERROR", "checkpoint_id": checkpoint_id}
+                )
+                db.commit()
+            except Exception as db_err:
+                db.rollback()
+                logger.error(f"[SatyaScan Screening] Could not persist failure record: {db_err}")
+
+            raise HTTPException(
+                status_code=500,
+                detail="Screening could not be completed due to an internal processing error. Please retry or contact the administrator."
+            )
+
+    def _execute_pipeline(
+        self,
+        db: Session,
+        screening_id: str,
+        start_time: float,
+        doc_image_path: str,
+        live_image_path: Optional[str] = None,
+        operator_id: Optional[int] = None,
+        doc_type: str = "PASSPORT",
+        checkpoint_id: Optional[str] = None,
+        checkpoint_name: Optional[str] = None
+    ) -> Dict[str, Any]:
         # 0. Initial Audit Event: Upload
         AuditService.record_event(
             db, screening_id, "DOCUMENT_UPLOADED",
-            {"file": os.path.basename(doc_image_path), "doc_type": doc_type}
+            {
+                "file": os.path.basename(doc_image_path),
+                "doc_type": doc_type,
+                "checkpoint_id": checkpoint_id,
+                "checkpoint_name": checkpoint_name
+            }
         )
 
         # 1. Quality Gate
@@ -246,15 +318,28 @@ class ScreeningOrchestrator:
         )
         masked_id = mask_document_number(raw_doc_id)
 
+        # Determine terminal status
+        if quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"] or not quality_res.get("is_acceptable", True):
+            terminal_status = "UNABLE_TO_VERIFY"
+            terminal_rec = "Unable to verify — image quality is insufficient. Please capture a clearer document."
+        elif risk_res["risk_band"] == "LOW":
+            terminal_status = "COMPLETED"
+            terminal_rec = risk_res["recommendation"]
+        else:
+            terminal_status = "MANUAL_REVIEW_REQUIRED"
+            terminal_rec = risk_res["recommendation"]
+
         screening_rec = Screening(
             id=screening_id,
             operator_id=operator_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_name=checkpoint_name,
             document_type=doc_type,
             masked_document_id=masked_id,
-            status="COMPLETED" if risk_res["risk_band"] == "LOW" else "MANUAL_REVIEW_REQUIRED",
+            status=terminal_status,
             risk_score=risk_res["risk_score"],
             risk_band=risk_res["risk_band"],
-            recommendation=risk_res["recommendation"],
+            recommendation=terminal_rec,
             doc_image_path=doc_image_path,
             live_image_path=live_image_path,
             ela_heatmap_path=tamper_res.get("heatmap_path"),
@@ -388,6 +473,8 @@ class ScreeningOrchestrator:
         return {
             "id": screening_id,
             "created_at": datetime.now(timezone.utc),
+            "checkpoint_id": checkpoint_id,
+            "checkpoint_name": checkpoint_name,
             "document_type": doc_type,
             "masked_document_id": masked_id,
             "status": screening_rec.status,

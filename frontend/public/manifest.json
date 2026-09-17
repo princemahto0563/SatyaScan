@@ -1,11 +1,11 @@
 {
-  "name": "SatyaScan Screening Console",
+  "name": "SatyaScan Screening Workstation",
   "short_name": "SatyaScan",
-  "description": "AI-Assisted Identity & Document Screening Platform for Border Checkpoints",
+  "description": "Identity Verification & Document Integrity Screening Workstation for Border Checkpoints",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#020617",
-  "theme_color": "#0f172a",
+  "background_color": "#090d16",
+  "theme_color": "#0f766e",
   "orientation": "any",
   "icons": [
     {

@@ -7,6 +7,7 @@ SHA-256 audit digest, and mandatory decision-support disclaimers.
 
 from typing import Dict, Any, List
 import os
+import html
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
@@ -47,7 +48,7 @@ class NumberedCanvas(canvas.Canvas):
         
         # Footer text
         self.line(54, 45, 558, 45)
-        self.drawString(54, 32, "SatyaScan AI-Assisted Identity & Document Screening Platform · SIH26188")
+        self.drawString(54, 32, "SatyaScan Document Integrity & Identity Verification Workstation · SIH26188")
         page_str = f"Page {self._pageNumber} of {page_count}"
         self.drawRightString(558, 32, page_str)
         self.restoreState()
@@ -127,7 +128,7 @@ class ReportGenerator:
 
         header_data = [
             [
-                Paragraph("<b>SatyaScan</b><br/><font size=9 color='#475569'>AI-Assisted Identity & Document Screening Platform</font>", title_style),
+                Paragraph("<b>SatyaScan</b><br/><font size=9 color='#475569'>Document Integrity & Identity Verification Workstation</font>", title_style),
                 Paragraph(
                     f"<para align=right><font size=14 color='{accent_color.hexval()}'><b>{risk_band} RISK</b></font><br/>"
                     f"<font size=10 color='#1E293B'><b>Score: {risk_score:.1f} / 100</b></font><br/>"
@@ -150,21 +151,29 @@ class ReportGenerator:
         ts_str = case_data.get("created_at", datetime.now().isoformat())
         doc_type = case_data.get("document_type", "PASSPORT")
         masked_id = case_data.get("masked_document_id", "N/A")
+        cp_info = case_data.get("checkpoint_name") or case_data.get("checkpoint_id") or "Central Immigration Checkpoint"
+        operator_info = case_data.get("operator_name") or "Authorized Border Officer"
+        if case_data.get("operator_badge"):
+            operator_info += f" ({case_data.get('operator_badge')})"
 
         overview_data = [
             [
-                Paragraph("<b>Screening ID:</b>", cell_bold), Paragraph(screening_id, cell_text),
-                Paragraph("<b>Screening Date:</b>", cell_bold), Paragraph(str(ts_str)[:19], cell_text)
+                Paragraph("<b>Screening ID:</b>", cell_bold), Paragraph(html.escape(str(screening_id)), cell_text),
+                Paragraph("<b>Screening Date:</b>", cell_bold), Paragraph(html.escape(str(ts_str)[:19]), cell_text)
             ],
             [
-                Paragraph("<b>Document Type:</b>", cell_bold), Paragraph(doc_type, cell_text),
-                Paragraph("<b>Masked Doc No:</b>", cell_bold), Paragraph(masked_id, cell_text)
+                Paragraph("<b>Checkpoint:</b>", cell_bold), Paragraph(html.escape(str(cp_info)), cell_text),
+                Paragraph("<b>Screening Officer:</b>", cell_bold), Paragraph(html.escape(str(operator_info)), cell_text)
+            ],
+            [
+                Paragraph("<b>Document Type:</b>", cell_bold), Paragraph(html.escape(str(doc_type)), cell_text),
+                Paragraph("<b>Masked Doc No:</b>", cell_bold), Paragraph(html.escape(str(masked_id)), cell_text)
             ],
             [
                 Paragraph("<b>Recommendation:</b>", cell_bold),
-                Paragraph(f"<b>{case_data.get('recommendation', 'Routine Clearance')}</b>", cell_bold),
+                Paragraph(f"<b>{html.escape(str(case_data.get('recommendation', 'Routine Clearance')))}</b>", cell_bold),
                 Paragraph("<b>System Status:</b>", cell_bold),
-                Paragraph(case_data.get("status", "COMPLETED"), cell_text)
+                Paragraph(html.escape(str(case_data.get("status", "COMPLETED"))), cell_text)
             ]
         ]
         t_overview = Table(overview_data, colWidths=[95, 157, 95, 157])
@@ -191,12 +200,16 @@ class ReportGenerator:
         ]
         for f in fields:
             status_color = "#059669" if f.get("match_status") == "MATCH" else "#DC2626"
+            field_name_clean = html.escape(str(f.get("field_name", "")).replace("_", " ").title())
+            vis_val_clean = html.escape(str(f.get("visual_value", "—")))
+            mrz_val_clean = html.escape(str(f.get("mrz_value", "—")))
+            status_clean = html.escape(str(f.get("match_status", "MATCH")))
             field_rows.append([
-                Paragraph(str(f.get("field_name", "")).replace("_", " ").title(), cell_text),
-                Paragraph(str(f.get("visual_value", "—")), cell_text),
-                Paragraph(str(f.get("mrz_value", "—")), cell_text),
+                Paragraph(field_name_clean, cell_text),
+                Paragraph(vis_val_clean, cell_text),
+                Paragraph(mrz_val_clean, cell_text),
                 Paragraph(f"{f.get('confidence', 1.0):.2f}", cell_text),
-                Paragraph(f"<font color='{status_color}'><b>{f.get('match_status', 'MATCH')}</b></font>", cell_text)
+                Paragraph(f"<font color='{status_color}'><b>{status_clean}</b></font>", cell_text)
             ])
         if len(field_rows) == 1:
             field_rows.append([Paragraph("No extracted fields available.", cell_text)] * 5)
@@ -216,6 +229,12 @@ class ReportGenerator:
         tamper = case_data.get("tamper_summary", {})
         face = case_data.get("face_result") or {}
 
+        ela_interp = html.escape(str(tamper.get("signals", {}).get("ela", {}).get("interpretation", "Normal compression baseline")))
+        noise_interp = html.escape(str(tamper.get("signals", {}).get("noise_residual", {}).get("interpretation", "Homogeneous noise distribution")))
+        copy_interp = html.escape(str(tamper.get("signals", {}).get("copy_move", {}).get("interpretation", "No cloned regions found")))
+        face_verdict = html.escape(str(face.get("verification_result", "NOT_RUN")))
+        face_rec = html.escape(str(face.get("recommendation", "N/A")))
+
         forensic_rows = [
             [
                 Paragraph("<b>Forensic Dimension</b>", cell_bold),
@@ -225,22 +244,22 @@ class ReportGenerator:
             [
                 Paragraph("Error Level Analysis (ELA)", cell_text),
                 Paragraph(f"Score: {tamper.get('signals', {}).get('ela', {}).get('anomaly_score', 0.0)}/100", cell_text),
-                Paragraph(tamper.get("signals", {}).get("ela", {}).get("interpretation", "Normal compression baseline"), cell_text)
+                Paragraph(ela_interp, cell_text)
             ],
             [
                 Paragraph("Sensor Noise Residual", cell_text),
                 Paragraph(f"Score: {tamper.get('signals', {}).get('noise_residual', {}).get('anomaly_score', 0.0)}/100", cell_text),
-                Paragraph(tamper.get("signals", {}).get("noise_residual", {}).get("interpretation", "Homogeneous noise distribution"), cell_text)
+                Paragraph(noise_interp, cell_text)
             ],
             [
                 Paragraph("Copy-Move Detection", cell_text),
                 Paragraph(f"Score: {tamper.get('signals', {}).get('copy_move', {}).get('anomaly_score', 0.0)}/100", cell_text),
-                Paragraph(tamper.get("signals", {}).get("copy_move", {}).get("interpretation", "No cloned regions found"), cell_text)
+                Paragraph(copy_interp, cell_text)
             ],
             [
                 Paragraph("Face Biometric Verification", cell_text),
                 Paragraph(f"Similarity: {face.get('similarity_score', 'N/A')} (Threshold: {face.get('threshold', 0.65)})", cell_text),
-                Paragraph(f"<b>{face.get('verification_result', 'NOT_RUN')}</b> — {face.get('recommendation', 'N/A')}", cell_text)
+                Paragraph(f"<b>{face_verdict}</b> — {face_rec}", cell_text)
             ]
         ]
         t_forensic = Table(forensic_rows, colWidths=[130, 124, 250])
@@ -267,11 +286,15 @@ class ReportGenerator:
         for r in reasons[:6]:  # Show top 6
             sev = r.get("severity", "LOW")
             scolor = "#DC2626" if sev in ["CRITICAL", "HIGH"] else "#D97706" if sev == "MEDIUM" else "#059669"
+            cat_clean = html.escape(str(r.get("category", "")).replace("_", " "))
+            sev_clean = html.escape(str(sev))
+            sum_clean = html.escape(str(r.get("summary", "")))
+            act_clean = html.escape(str(r.get("action", "")))
             reason_rows.append([
-                Paragraph(str(r.get("category", "")).replace("_", " "), cell_text),
-                Paragraph(f"<font color='{scolor}'><b>{sev}</b></font>", cell_text),
-                Paragraph(str(r.get("summary", "")), cell_text),
-                Paragraph(str(r.get("action", "")), cell_text)
+                Paragraph(cat_clean, cell_text),
+                Paragraph(f"<font color='{scolor}'><b>{sev_clean}</b></font>", cell_text),
+                Paragraph(sum_clean, cell_text),
+                Paragraph(act_clean, cell_text)
             ])
         if len(reason_rows) == 1:
             reason_rows.append([
@@ -324,10 +347,10 @@ class ReportGenerator:
 
         # 7. Mandatory Disclaimer
         disclaimer_text = (
-            "<b>NOTICE & DISCLAIMER:</b> This automated case record is generated by the SatyaScan AI-Assisted "
-            "Identity & Document Screening Platform for decision-support purposes only. Automated findings, anomaly "
-            "scores, and biometric metrics do not autonomously constitute a legal verdict. Final admissibility and legal "
-            "clearance decisions remain the sole statutory prerogative of authorized immigration and border security officers."
+            "<b>NOTICE & DISCLAIMER:</b> This verification record is generated by the SatyaScan "
+            "Document Integrity & Identity Verification Workstation for decision-support purposes only. Automated findings, "
+            "forensic anomaly scores, and biometric metrics do not autonomously constitute a legal verdict. Final admissibility "
+            "and legal clearance decisions remain the sole statutory prerogative of authorized immigration and border security officers."
         )
         elements.append(Paragraph(disclaimer_text, ParagraphStyle("Disc", parent=normal, fontSize=6.5, leading=8.5, textColor=colors.HexColor("#64748B"))))
 

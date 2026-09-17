@@ -1,33 +1,44 @@
 """
 SatyaScan Security & Privacy Utilities
-Handles JWT token generation, password hashing, RBAC verification,
-secure file upload validation (magic bytes & size limits), and PII masking.
+Handles JWT token generation, bcrypt password hashing, RBAC verification,
+secure file upload validation (magic bytes, decode integrity & dimension limits),
+and PII masking.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 import jwt
 import bcrypt
+import io
+import os
+import re
+from PIL import Image
 from fastapi import HTTPException, Security, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import re
+from sqlalchemy.orm import Session
 
 from backend.app.core.config import settings
+from backend.app.models.database import get_db, User
 
 security_bearer = HTTPBearer(auto_error=False)
 
+# Configure PIL decompression bomb protection
+Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
 
-# --- Password Hashing (Direct bcrypt for Python 3.13 compatibility) ---
+
+# --- Password Hashing (Direct bcrypt with explicit work factor 12) ---
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
+        # bcrypt standard limit is 72 bytes
         return bcrypt.checkpw(plain_password.encode('utf-8')[:72], hashed_password.encode('utf-8'))
     except Exception:
         return False
 
 
 def get_password_hash(password: str) -> str:
-    salt = bcrypt.gensalt()
+    # Explicit cost factor 12 for strong defensive posture
+    salt = bcrypt.gensalt(rounds=12)
     return bcrypt.hashpw(password.encode('utf-8')[:72], salt).decode('utf-8')
 
 
@@ -39,17 +50,85 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+    to_encode.update({"exp": expire, "iat": datetime.now(timezone.utc)})
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
 
 def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     try:
-        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            token,
+            settings.JWT_SECRET,
+            algorithms=[settings.ALGORITHM],
+            options={"verify_signature": True, "verify_exp": True}
+        )
         return payload
     except (jwt.PyJWTError, Exception):
         return None
+
+
+# --- Authentication & RBAC Dependencies ---
+
+def get_current_user(
+    token_creds: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Validates Bearer JWT token and returns authenticated User model.
+    In strict mode or production, strictly requires Bearer token (rejects missing with HTTP 401).
+    In evaluation prototype mode, falls back to default officer if no token was passed,
+    preserving seamless demonstration compatibility.
+    Any provided token that is invalid or expired is ALWAYS rejected with HTTP 401.
+    """
+    if token_creds and token_creds.credentials:
+        token = token_creds.credentials
+        payload = decode_access_token(token)
+        if not payload or "sub" not in payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired authentication token.",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+
+        user = db.query(User).filter(User.username == payload["sub"]).first()
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is deactivated or not found.",
+                headers={"WWW-Authenticate": "Bearer"}
+            )
+        return user
+
+    if settings.STRICT_AUTH:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials were not provided.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+
+    # SIH Evaluation Demo Fallback (EVALUATION ONLY)
+    user = db.query(User).filter(User.username == "officer").first()
+    if user and user.is_active:
+        return user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication credentials were not provided.",
+        headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
+def require_role(allowed_roles: List[str]):
+    """Role-Based Access Control (RBAC) dependency factory."""
+    def role_checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: requires one of the following roles: {', '.join(allowed_roles)}"
+            )
+        return current_user
+    return role_checker
 
 
 # --- PII Masking Utilities (Privacy by Design) ---
@@ -100,21 +179,32 @@ ALLOWED_MAGIC_HEADERS = {
     b'RIFF': "image/webp"
 }
 
-MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+def sanitize_filename(filename: str) -> str:
+    """Strips directory traversal sequences, returning safe basename."""
+    base = os.path.basename(filename).strip()
+    # Remove null bytes and non-alphanumeric/dot/dash characters
+    clean = re.sub(r'[^a-zA-Z0-9_.-]', '_', base)
+    return clean or "upload.jpg"
 
 
 def validate_uploaded_image_bytes(file_bytes: bytes, filename: str) -> str:
     """
-    Validates uploaded file against MIME spoofing, magic header bytes, and size caps.
+    Validates uploaded file against MIME spoofing, magic header bytes,
+    file corruption, and pixel dimension limits (decompression bomb protection).
     Raises HTTPException if file is suspect or invalid.
     """
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail=f"File exceeds maximum allowed limit of {MAX_FILE_SIZE_BYTES // (1024*1024)}MB.")
+    if len(file_bytes) > settings.MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum allowed limit of {settings.MAX_FILE_SIZE_BYTES // (1024*1024)}MB."
+        )
 
-    # Validate file extension
-    ext = filename.lower().split('.')[-1] if '.' in filename else ''
+    # Sanitize and validate file extension
+    clean_name = sanitize_filename(filename)
+    ext = clean_name.lower().split('.')[-1] if '.' in clean_name else ''
     if ext not in ["jpg", "jpeg", "png", "webp"]:
         raise HTTPException(status_code=400, detail=f"Invalid file extension '.{ext}'. Supported: JPG, PNG, WEBP.")
 
@@ -126,7 +216,7 @@ def validate_uploaded_image_bytes(file_bytes: bytes, filename: str) -> str:
             valid_format = True
             detected_mime = mime
             break
-    
+
     # WebP check (needs RIFF header and WEBP signature)
     if file_bytes.startswith(b'RIFF') and len(file_bytes) > 12:
         if file_bytes[8:12] == b'WEBP':
@@ -137,6 +227,40 @@ def validate_uploaded_image_bytes(file_bytes: bytes, filename: str) -> str:
         raise HTTPException(
             status_code=400,
             detail="File content header does not match valid JPEG, PNG, or WebP image format. Potential polyglot rejected."
+        )
+
+    # Structural decoding & corruption verification via PIL
+    try:
+        bio = io.BytesIO(file_bytes)
+        with Image.open(bio) as img:
+            img.verify()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Corrupted image file or invalid image structure. File could not be decoded."
+        )
+
+    # Dimension & decompression bomb protection (re-open fresh BytesIO after verify)
+    try:
+        bio2 = io.BytesIO(file_bytes)
+        with Image.open(bio2) as img:
+            width, height = img.size
+            total_pixels = width * height
+            if (
+                width > settings.MAX_IMAGE_DIMENSION
+                or height > settings.MAX_IMAGE_DIMENSION
+                or total_pixels > settings.MAX_IMAGE_PIXELS
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Document image exceeds the permitted processing dimensions."
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Corrupted image file or invalid image structure."
         )
 
     return detected_mime
