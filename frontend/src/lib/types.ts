@@ -123,6 +123,44 @@ export interface ScreeningDetail {
   }>;
   signal_breakdown: Record<string, number>;
   audit_trail: AuditEvent[];
+  blockchain_anchor?: BlockchainAnchor | null;
+}
+
+export interface BlockchainAnchor {
+  id?: number;
+  screening_id: string;
+  document_hash: string;
+  result_hash: string;
+  transaction_id?: string | null;
+  ledger_asset_id?: string | null;
+  anchor_timestamp?: string | null;
+  network: string;
+  channel: string;
+  chaincode: string;
+  status: "PENDING" | "VERIFIED" | "UNAVAILABLE" | "FAILED" | "MISMATCH";
+  verification_timestamp?: string | null;
+  verification_message?: string | null;
+  created_at?: string | null;
+}
+
+export interface BlockchainVerificationResponse {
+  screening_id: string;
+  is_verified: boolean;
+  status: "VERIFIED" | "MISMATCH" | "UNAVAILABLE" | "FAILED";
+  document_hash: string;
+  result_hash: string;
+  document_hash_matches: boolean;
+  result_hash_matches: boolean;
+  network: string;
+  channel: string;
+  chaincode: string;
+  transaction_id?: string | null;
+  ledger_asset_id?: string | null;
+  anchor_timestamp?: string | null;
+  verification_timestamp: string;
+  status_message: string;
+  privacy_compliance: string;
+  on_chain_record?: Record<string, any> | null;
 }
 
 export interface CheckpointInfo {

@@ -12,6 +12,7 @@ import re
 from backend.app.models.database import get_db, ReferenceWatchlist, User
 from backend.app.schemas.screening import WatchlistEntryCreate, WatchlistEntryResponse
 from backend.app.core.security import get_current_user, require_role
+from backend.app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/watchlist", tags=["Reference Watchlist"])
 
@@ -39,6 +40,7 @@ def add_watchlist_entry(
     """
     Adds a new synthetic reference watchlist entry.
     RBAC Protected: Requires SUPERVISOR or ADMIN role.
+    Appends WATCHLIST_CHANGE event to cryptographic audit ledger.
     """
     clean_id = re.sub(r'[^A-Za-z0-9_-]', '', entry.document_id).upper()
     if not clean_id:
@@ -60,4 +62,24 @@ def add_watchlist_entry(
     db.add(rec)
     db.commit()
     db.refresh(rec)
+
+    # Cryptographic Audit Ledger Entry
+    try:
+        AuditService.record_event(
+            db=db,
+            screening_id=f"WATCHLIST-{clean_id}",
+            event_type="WATCHLIST_CHANGE",
+            payload_data={
+                "action": "ADD_ENTRY",
+                "document_id": clean_id,
+                "risk_category": rec.risk_category,
+                "reason": rec.reason,
+                "added_by": current_user.username,
+                "role": current_user.role
+            },
+            actor=f"{current_user.role}:{current_user.username}"
+        )
+    except Exception:
+        pass
+
     return rec

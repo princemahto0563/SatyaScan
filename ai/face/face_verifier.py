@@ -48,10 +48,18 @@ class FaceVerifier:
                 # TD3 standard passport portrait zone
                 px1, py1 = int(iw * 0.04), int(ih * 0.16)
                 pw, ph = int(iw * 0.24), int(ih * 0.40)
-                faces = [[px1, py1, pw, ph]]
+                crop_zone = gray[py1:py1+ph, px1:px1+pw]
+                if crop_zone.size > 0 and np.std(crop_zone) > 15.0 and cv2.Laplacian(crop_zone, cv2.CV_64F).var() > 20.0:
+                    faces = [[px1, py1, pw, ph]]
+                else:
+                    return None, None, {"detected": False, "reason": "No face detected in portrait zone"}
             elif ih >= 150 and iw >= 120:
-                # Dedicated selfie crop
-                faces = [[int(iw * 0.1), int(ih * 0.1), int(iw * 0.8), int(ih * 0.8)]]
+                # Dedicated selfie crop candidate - only if it has real texture/variance
+                crop_zone = gray[int(ih * 0.1):int(ih * 0.9), int(iw * 0.1):int(iw * 0.9)]
+                if crop_zone.size > 0 and np.std(crop_zone) > 15.0 and cv2.Laplacian(crop_zone, cv2.CV_64F).var() > 20.0:
+                    faces = [[int(iw * 0.1), int(ih * 0.1), int(iw * 0.8), int(ih * 0.8)]]
+                else:
+                    return None, None, {"detected": False, "reason": "No face detected"}
             else:
                 return None, None, {"detected": False, "reason": "No face detected"}
 
@@ -74,6 +82,9 @@ class FaceVerifier:
         # Quality metrics
         sharpness = float(cv2.Laplacian(cropped_gray, cv2.CV_64F).var())
         mean_brightness = float(np.mean(cropped_gray))
+        if sharpness < 10.0 or np.std(cropped_gray) < 10.0:
+            return None, None, {"detected": False, "reason": "Crop lacks facial texture/features"}
+
         quality_adequate = (w >= 64 and h >= 64 and sharpness >= 40.0)
 
         quality_metrics = {

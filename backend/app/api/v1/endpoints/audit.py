@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from typing import List
 import re
 
-from backend.app.models.database import get_db, AuditEvent, User
+from backend.app.models.database import get_db, AuditEvent, User, Screening
 from backend.app.schemas.screening import AuditEventSchema, AuditVerificationResult
 from backend.app.core.security import get_current_user
+from backend.app.core.permissions import check_checkpoint_access
 from backend.app.services.audit_service import AuditService
 from backend.app.services.blockchain_adapter import BlockchainAnchorAdapter
 
@@ -37,8 +38,13 @@ def get_audit_trail(
 ):
     """
     Returns ordered audit ledger entries for an authenticated inspection case.
+    Enforces station-level checkpoint isolation.
     """
     clean_id = validate_screening_id(screening_id)
+    screening = db.query(Screening).filter(Screening.id == clean_id).first()
+    if screening:
+        check_checkpoint_access(current_user, screening, db, resource_type="audit_trail")
+
     events = (
         db.query(AuditEvent)
         .filter(AuditEvent.screening_id == clean_id)
@@ -57,8 +63,13 @@ def verify_audit_trail(
     """
     Cryptographically verifies the unbroken SHA-256 hash chain from genesis to head.
     Detects retroactive modifications or payload alteration.
+    Enforces station-level checkpoint isolation.
     """
     clean_id = validate_screening_id(screening_id)
+    screening = db.query(Screening).filter(Screening.id == clean_id).first()
+    if screening:
+        check_checkpoint_access(current_user, screening, db, resource_type="audit_verification")
+
     result = AuditService.verify_audit_chain(db, clean_id)
     return result
 
@@ -71,8 +82,13 @@ def anchor_audit_to_blockchain(
 ):
     """
     Certifies the latest verified audit hash with the local cryptographic notarization adapter.
+    Enforces station-level checkpoint isolation.
     """
     clean_id = validate_screening_id(screening_id)
+    screening = db.query(Screening).filter(Screening.id == clean_id).first()
+    if screening:
+        check_checkpoint_access(current_user, screening, db, resource_type="audit_anchor")
+
     verification = AuditService.verify_audit_chain(db, clean_id)
     if not verification["is_valid"]:
         raise HTTPException(
@@ -83,6 +99,7 @@ def anchor_audit_to_blockchain(
     receipt = blockchain_adapter.create_anchor_receipt(
         screening_id=clean_id,
         audit_head_hash=verification["head_hash"],
-        total_events=verification["total_events"]
+        total_events=verification["total_events"],
+        db=db
     )
     return receipt

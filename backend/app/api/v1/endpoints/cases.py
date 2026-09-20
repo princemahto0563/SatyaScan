@@ -11,6 +11,7 @@ import re
 
 from backend.app.models.database import get_db, Screening, User
 from backend.app.core.security import get_current_user
+from backend.app.core.permissions import check_checkpoint_access
 from backend.app.services.audit_service import AuditService
 
 router = APIRouter(prefix="/cases", tags=["Cases"])
@@ -35,6 +36,7 @@ def update_case_status(
     Updates the operational review status of a screening case.
     Requires authenticated officer or supervisor. Attributions tied directly
     to authenticated JWT session rather than client-provided credentials.
+    Enforces checkpoint station isolation.
     """
     clean_id = case_id.strip()
     if not CASE_ID_REGEX.match(clean_id):
@@ -50,6 +52,9 @@ def update_case_status(
     screening = db.query(Screening).filter(Screening.id == clean_id).first()
     if not screening:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case record not found")
+
+    # Enforce checkpoint isolation policy
+    check_checkpoint_access(current_user, screening, db, resource_type="case_status")
 
     old_status = screening.status
     screening.status = norm_status

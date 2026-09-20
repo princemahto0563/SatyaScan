@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # Database: SQLite by default for zero-config local execution, PostgreSQL when configured
     DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{os.path.join(PROJECT_ROOT, 'satyascan.db')}")
     
+    # Hyperledger Fabric Permissioned Blockchain Anchor Configuration
+    FABRIC_ENABLED: bool = os.getenv("FABRIC_ENABLED", "false").lower() in ("true", "1", "yes")
+    FABRIC_GATEWAY_PEER: str = os.getenv("FABRIC_GATEWAY_PEER", "localhost:7051")
+    FABRIC_CHANNEL: str = os.getenv("FABRIC_CHANNEL", "satyascan-channel")
+    FABRIC_CHAINCODE: str = os.getenv("FABRIC_CHAINCODE", "screening_anchor")
+    FABRIC_MSP_ID: str = os.getenv("FABRIC_MSP_ID", "Org1MSP")
+    FABRIC_CRYPTO_PATH: str = os.getenv("FABRIC_CRYPTO_PATH", os.path.join(PROJECT_ROOT, "blockchain", "crypto-config"))
+    FABRIC_CONNECTION_PROFILE: str = os.getenv("FABRIC_CONNECTION_PROFILE", os.path.join(PROJECT_ROOT, "blockchain", "connection-profile.json"))
+    
     @property
     def cors_origins_list(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ALLOWED_ORIGINS.split(",") if orig.strip()]

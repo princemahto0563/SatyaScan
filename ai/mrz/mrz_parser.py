@@ -71,7 +71,17 @@ class MRZParser:
     def parse_td3(cls, line1: str, line2: str) -> Dict[str, Any]:
         """
         Parses 2 lines of TD3 MRZ and verifies all internal check digits.
+        Strictly enforces 44-character line lengths.
         """
+        clean1 = line1.strip().replace(" ", "")
+        clean2 = line2.strip().replace(" ", "")
+        if len(clean1) != 44 or len(clean2) != 44:
+            return {
+                "parsed": False,
+                "error": "MRZ_PARSE_FAILED",
+                "message": f"TD3 MRZ line length mismatch: Line 1={len(clean1)} chars, Line 2={len(clean2)} chars. Exactly 44 characters required."
+            }
+
         l1 = cls.normalize_mrz_line(line1)
         l2 = cls.normalize_mrz_line(line2)
 
@@ -155,6 +165,14 @@ class MRZParser:
         iso_dob = parse_yymmdd(raw_dob, is_expiry=False)
         iso_expiry = parse_yymmdd(raw_expiry, is_expiry=True)
 
+        is_expired = False
+        if iso_expiry:
+            try:
+                exp_dt = datetime.strptime(iso_expiry, "%Y-%m-%d")
+                is_expired = exp_dt < datetime.now()
+            except Exception:
+                pass
+
         return {
             "parsed": True,
             "document_code": doc_code,
@@ -169,6 +187,7 @@ class MRZParser:
             "sex": sex,
             "date_of_expiry": iso_expiry,
             "raw_date_of_expiry": raw_expiry,
+            "is_expired": is_expired,
             "optional_data": optional_data,
             "raw_lines": [l1, l2],
             "check_digits": {

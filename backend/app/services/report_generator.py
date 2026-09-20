@@ -48,7 +48,7 @@ class NumberedCanvas(canvas.Canvas):
         
         # Footer text
         self.line(54, 45, 558, 45)
-        self.drawString(54, 32, "SatyaScan Document Integrity & Identity Verification Workstation · SIH26188")
+        self.drawString(54, 32, "SatyaScan Document Integrity Workstation · DEMO / EVALUATION DATA · SIH26188")
         page_str = f"Page {self._pageNumber} of {page_count}"
         self.drawRightString(558, 32, page_str)
         self.restoreState()
@@ -170,10 +170,14 @@ class ReportGenerator:
                 Paragraph("<b>Masked Doc No:</b>", cell_bold), Paragraph(html.escape(str(masked_id)), cell_text)
             ],
             [
+                Paragraph("<b>OCR Engine:</b>", cell_bold), Paragraph(html.escape(str(case_data.get("ocr_engine") or "PaddleOCR / Tesseract")), cell_text),
+                Paragraph("<b>System Status:</b>", cell_bold), Paragraph(html.escape(str(case_data.get("status", "COMPLETED"))), cell_text)
+            ],
+            [
                 Paragraph("<b>Recommendation:</b>", cell_bold),
                 Paragraph(f"<b>{html.escape(str(case_data.get('recommendation', 'Routine Clearance')))}</b>", cell_bold),
-                Paragraph("<b>System Status:</b>", cell_bold),
-                Paragraph(html.escape(str(case_data.get("status", "COMPLETED"))), cell_text)
+                Paragraph("<b>Evaluation Mode:</b>", cell_bold),
+                Paragraph("DEMO / EVALUATION DATA", cell_bold)
             ]
         ]
         t_overview = Table(overview_data, colWidths=[95, 157, 95, 157])
@@ -186,31 +190,56 @@ class ReportGenerator:
         elements.append(t_overview)
         elements.append(Spacer(1, 10))
 
-        # 3. Extracted Visual Fields vs MRZ Table
+        # 3. Extracted Visual Fields Table
         elements.append(Paragraph("1. Identity Field Extraction & Cross-Verification", section_heading))
         fields = case_data.get("extracted_fields", [])
-        field_rows = [
-            [
-                Paragraph("<b>Field Name</b>", cell_bold),
-                Paragraph("<b>Visual (VIZ)</b>", cell_bold),
-                Paragraph("<b>MRZ Decoded</b>", cell_bold),
-                Paragraph("<b>Confidence</b>", cell_bold),
-                Paragraph("<b>Cross-Check Status</b>", cell_bold)
+        is_visa = (str(doc_type).upper() == "VISA")
+
+        if is_visa:
+            field_rows = [
+                [
+                    Paragraph("<b>Field Name</b>", cell_bold),
+                    Paragraph("<b>Extracted Value</b>", cell_bold),
+                    Paragraph("<b>OCR Engine</b>", cell_bold),
+                    Paragraph("<b>Confidence</b>", cell_bold),
+                    Paragraph("<b>Status / Validity</b>", cell_bold)
+                ]
             ]
-        ]
-        for f in fields:
-            status_color = "#059669" if f.get("match_status") == "MATCH" else "#DC2626"
-            field_name_clean = html.escape(str(f.get("field_name", "")).replace("_", " ").title())
-            vis_val_clean = html.escape(str(f.get("visual_value", "—")))
-            mrz_val_clean = html.escape(str(f.get("mrz_value", "—")))
-            status_clean = html.escape(str(f.get("match_status", "MATCH")))
-            field_rows.append([
-                Paragraph(field_name_clean, cell_text),
-                Paragraph(vis_val_clean, cell_text),
-                Paragraph(mrz_val_clean, cell_text),
-                Paragraph(f"{f.get('confidence', 1.0):.2f}", cell_text),
-                Paragraph(f"<font color='{status_color}'><b>{status_clean}</b></font>", cell_text)
-            ])
+            for f in fields:
+                val_clean = html.escape(str(f.get("visual_value") or f.get("mrz_value") or "—"))
+                val_status = f.get("validation", "VALID")
+                status_color = "#059669" if val_status == "VALID" else "#DC2626"
+                engine_str = f.get("ocr_engine") or case_data.get("ocr_engine") or "PaddleOCR"
+                field_rows.append([
+                    Paragraph(html.escape(str(f.get("field_name", "")).replace("_", " ").title()), cell_text),
+                    Paragraph(val_clean, cell_text),
+                    Paragraph(html.escape(str(engine_str)), cell_text),
+                    Paragraph(f"{f.get('confidence', 1.0):.2f}" if f.get('confidence') is not None else "—", cell_text),
+                    Paragraph(f"<font color='{status_color}'><b>{html.escape(str(val_status))}</b></font>", cell_text)
+                ])
+        else:
+            field_rows = [
+                [
+                    Paragraph("<b>Field Name</b>", cell_bold),
+                    Paragraph("<b>Visual (VIZ)</b>", cell_bold),
+                    Paragraph("<b>MRZ Decoded</b>", cell_bold),
+                    Paragraph("<b>Confidence</b>", cell_bold),
+                    Paragraph("<b>Cross-Check Status</b>", cell_bold)
+                ]
+            ]
+            for f in fields:
+                status_color = "#059669" if f.get("match_status") == "MATCH" else "#DC2626"
+                field_name_clean = html.escape(str(f.get("field_name", "")).replace("_", " ").title())
+                vis_val_clean = html.escape(str(f.get("visual_value", "—")))
+                mrz_val_clean = html.escape(str(f.get("mrz_value", "—")))
+                status_clean = html.escape(str(f.get("match_status", "MATCH")))
+                field_rows.append([
+                    Paragraph(field_name_clean, cell_text),
+                    Paragraph(vis_val_clean, cell_text),
+                    Paragraph(mrz_val_clean, cell_text),
+                    Paragraph(f"{f.get('confidence', 1.0):.2f}" if f.get('confidence') is not None else "—", cell_text),
+                    Paragraph(f"<font color='{status_color}'><b>{status_clean}</b></font>", cell_text)
+                ])
         if len(field_rows) == 1:
             field_rows.append([Paragraph("No extracted fields available.", cell_text)] * 5)
 
@@ -314,36 +343,54 @@ class ReportGenerator:
         elements.append(t_reasons)
         elements.append(Spacer(1, 12))
 
-        # 6. Cryptographic Chain of Custody & Officer Sign-off Block
+        # 6. Permissioned Blockchain Audit Anchor & Officer Sign-off Block
+        b_anchor = case_data.get("blockchain_anchor") or {}
+        anchor_status = b_anchor.get("status", "UNAVAILABLE")
+        status_color = "#059669" if anchor_status == "VERIFIED" else ("#DC2626" if anchor_status == "MISMATCH" else "#D97706")
+
+        doc_hash = b_anchor.get("document_hash") or "N/A"
+        res_hash = b_anchor.get("result_hash") or "N/A"
+        tx_id = b_anchor.get("transaction_id") or "NONE (Private ledger offline / Pending host deployment)"
+        network_str = b_anchor.get("network", "Hyperledger Fabric (Private)")
+        channel_str = b_anchor.get("channel", "satyascan-channel")
+        chaincode_str = b_anchor.get("chaincode", "screening_anchor")
+
         audit_events = case_data.get("audit_trail", [])
         latest_hash = audit_events[-1].get("event_hash") if audit_events else "0" * 64
 
-        sign_data = [
-            [
-                Paragraph(
-                    f"<b>Cryptographic Audit Digest (SHA-256):</b><br/>"
-                    f"<font size=6 color='#475569'>{latest_hash}</font><br/>"
-                    f"<font size=7 color='#64748B'>Chain Length: {len(audit_events)} verified events · Genesis to Head unbroken.</font>",
-                    normal
-                ),
-                Paragraph(
-                    "<b>Screening Officer Sign-off:</b><br/><br/>"
-                    "Signature: __________________________<br/>"
-                    "Badge / Station: ____________________",
-                    normal
-                )
-            ]
-        ]
-        t_sign = Table(sign_data, colWidths=[310, 194])
+        anchor_info_p = Paragraph(
+            f"<b>PERMISSIONED BLOCKCHAIN AUDIT ANCHOR:</b><br/>"
+            f"<font size=6.5 color='#334155'><b>Network:</b> {network_str} | <b>Channel:</b> {channel_str} | <b>Chaincode:</b> {chaincode_str}</font><br/>"
+            f"<font size=6.5 color='#334155'><b>Anchor Status:</b> <font color='{status_color}'><b>{anchor_status}</b></font> | "
+            f"<b>Local SHA-256 Audit Chain:</b> <font color='#059669'><b>VERIFIED ({len(audit_events)} events unbroken)</b></font></font><br/>"
+            f"<font size=5.5 color='#475569'><b>Document SHA-256 Digest:</b> {doc_hash}</font><br/>"
+            f"<font size=5.5 color='#475569'><b>Result Canonical SHA-256 Digest:</b> {res_hash}</font><br/>"
+            f"<font size=5.5 color='#64748B'><b>Transaction ID:</b> {tx_id}</font><br/>"
+            f"<font size=6 color='#64748B'><i>Evidence stays off-chain; cryptographic proof goes on-chain. Zero PII/biometrics.</i></font>",
+            normal
+        )
+
+        sign_p = Paragraph(
+            "<b>Screening Officer Sign-off:</b><br/><br/>"
+            "Signature: __________________________<br/>"
+            "Badge / Station: ____________________<br/>"
+            "Action: [  ] CLEARED   [  ] SECONDARY",
+            normal
+        )
+
+        sign_data = [[anchor_info_p, sign_p]]
+        t_sign = Table(sign_data, colWidths=[330, 174])
         t_sign.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
             ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#CBD5E1")),
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('TOPPADDING', (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+            ('LEFTPADDING', (0,0), (-1,-1), 6),
+            ('RIGHTPADDING', (0,0), (-1,-1), 6),
         ]))
         elements.append(t_sign)
-        elements.append(Spacer(1, 8))
+        elements.append(Spacer(1, 6))
 
         # 7. Mandatory Disclaimer
         disclaimer_text = (

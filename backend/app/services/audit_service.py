@@ -53,7 +53,7 @@ class AuditService:
         # 3. Calculate event hash
         timestamp = datetime.now(timezone.utc)
         timestamp_str = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
-        chain_string = f"{previous_hash}|{timestamp_str}|{actor}|{event_type}|{payload_hash}"
+        chain_string = f"{screening_id}|{previous_hash}|{timestamp_str}|{actor}|{event_type}|{payload_hash}"
         event_hash = cls.compute_sha256(chain_string)
 
         event = AuditEvent(
@@ -110,7 +110,7 @@ class AuditService:
 
             # Recompute event hash
             ts_str = ev.timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
-            chain_str = f"{ev.previous_hash}|{ts_str}|{ev.actor}|{ev.event_type}|{ev.payload_hash}"
+            chain_str = f"{ev.screening_id}|{ev.previous_hash}|{ts_str}|{ev.actor}|{ev.event_type}|{ev.payload_hash}"
             expected_hash = cls.compute_sha256(chain_str)
 
             if ev.event_hash != expected_hash:
@@ -135,3 +135,6 @@ class AuditService:
             "verified_at": datetime.now(timezone.utc),
             "status_message": f"Cryptographic integrity verified. All {len(events)} events form an unbroken SHA-256 hash chain."
         }
+
+    # Alias for convenience and test compatibility
+    verify_chain = verify_audit_chain

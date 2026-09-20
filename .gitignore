@@ -65,3 +65,14 @@ yarn-error.log*
 # OS artifacts
 .DS_Store
 Thumbs.db
+
+# Hyperledger Fabric & Blockchain artifacts
+blockchain/wallet/
+blockchain/crypto-config/
+blockchain/ledgers/
+*.id
+*.msp
+*.keystore
+*.priv
+peerOrganizations/
+ordererOrganizations/

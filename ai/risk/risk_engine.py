@@ -35,7 +35,8 @@ class RiskEngine:
         rule_findings: List[Dict[str, Any]],
         tamper_res: Dict[str, Any],
         face_res: Optional[Dict[str, Any]] = None,
-        duplicate_res: Optional[Dict[str, Any]] = None
+        duplicate_res: Optional[Dict[str, Any]] = None,
+        doc_type: str = "PASSPORT"
     ) -> Dict[str, Any]:
         """
         Computes composite risk score and synthesizes prioritized evidence reasons.
@@ -59,7 +60,7 @@ class RiskEngine:
                     "detail": "Mathematical 7-3-1 check digit validation failed on machine-readable zone.",
                     "action": "Inspect document under UV/IR scanner for physical page alteration."
                 })
-        else:
+        elif doc_type == "PASSPORT":
             mrz_score = 25.0
             reasons.append({
                 "category": "MRZ_CHECKSUM",
@@ -69,6 +70,9 @@ class RiskEngine:
                 "detail": "Document lacks a readable 2-line machine-readable zone.",
                 "action": "Manual visual examination required."
             })
+        else:
+            # For non-passport (e.g. Visa vignette without MRZ), no MRZ penalty
+            mrz_score = 0.0
         signal_breakdown["mrz_integrity"] = round(mrz_score, 1)
 
         # 2. VIZ vs MRZ Cross-Check Consistency (0 - 100)

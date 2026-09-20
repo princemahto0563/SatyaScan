@@ -19,7 +19,7 @@ class DocumentQualityGate:
     BLUR_THRESHOLD = 50.0            # Laplacian variance threshold
     MIN_WIDTH = 640                  # Minimum acceptable width in pixels
     MIN_HEIGHT = 480                 # Minimum acceptable height in pixels
-    GLARE_MAX_RATIO = 0.12           # Max 12% pixels with near-max saturation (>250)
+    GLARE_MAX_RATIO = 0.25           # Max 25% pixels with near-max saturation (>250) for white document pages
     MIN_CONTRAST = 18.0              # Standard deviation of grayscale intensity
     MIN_BRIGHTNESS = 25.0            # Mean grayscale intensity minimum
     MAX_BRIGHTNESS = 245.0           # Mean grayscale intensity maximum

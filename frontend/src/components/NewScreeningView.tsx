@@ -205,8 +205,10 @@ export function NewScreeningView({ onScreeningCompleted }: NewScreeningViewProps
             >
               <option value="PASSPORT">Passport (ICAO TD3)</option>
               <option value="VISA">Visa Vignette</option>
-              <option value="NATIONAL_ID">National ID Card</option>
             </select>
+            <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+              Passport & Visa Only
+            </span>
           </div>
         </div>
       </div>

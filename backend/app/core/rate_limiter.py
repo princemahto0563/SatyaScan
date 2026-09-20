@@ -78,3 +78,20 @@ def rate_limit_screening(request: Request):
             detail="Screening request limit reached. Please wait before submitting more documents.",
             headers={"Retry-After": "60"}
         )
+
+
+def rate_limit_reports(request: Request):
+    """
+    Rate limits PDF report generation (30 req / min per IP) to prevent CPU resource exhaustion.
+    Production Note: In multi-replica cloud deployments, swap InMemoryRateLimiter with a Redis
+    sliding window script (e.g., redis.call('zremrangebyscore', ...)).
+    """
+    ip = get_client_ip(request)
+    key = f"reports:{ip}"
+    if not limiter.is_allowed(key, max_requests=30, window_seconds=60):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Report generation limit reached. Please wait before downloading more reports.",
+            headers={"Retry-After": "60"}
+        )
+

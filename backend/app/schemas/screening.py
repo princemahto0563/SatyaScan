@@ -63,7 +63,9 @@ class ExtractedFieldSchema(BaseModel):
     field_name: str
     visual_value: Optional[str] = None
     mrz_value: Optional[str] = None
-    confidence: float
+    confidence: Optional[float] = None
+    ocr_engine: Optional[str] = None
+    validation: Optional[str] = "VALID"
     match_status: str
     bounding_box: Optional[List[List[int]]] = None
 
@@ -133,6 +135,7 @@ class AuditVerificationResult(BaseModel):
 
 class ScreeningSummaryResponse(BaseModel):
     id: str
+    screening_id: Optional[str] = None
     created_at: datetime
     checkpoint_id: Optional[str] = None
     checkpoint_name: Optional[str] = None
@@ -142,6 +145,7 @@ class ScreeningSummaryResponse(BaseModel):
     risk_score: float
     risk_band: str
     recommendation: Optional[str] = None
+    ocr_engine: Optional[str] = None
     execution_latency_ms: float
 
     class Config:
@@ -150,6 +154,7 @@ class ScreeningSummaryResponse(BaseModel):
 
 class ScreeningDetailResponse(BaseModel):
     id: str
+    screening_id: Optional[str] = None
     created_at: datetime
     checkpoint_id: Optional[str] = None
     checkpoint_name: Optional[str] = None
@@ -159,6 +164,7 @@ class ScreeningDetailResponse(BaseModel):
     risk_score: float
     risk_band: str
     recommendation: Optional[str] = None
+    ocr_engine: Optional[str] = None
     execution_latency_ms: float
     doc_image_url: Optional[str] = None
     live_image_url: Optional[str] = None
@@ -175,9 +181,24 @@ class ScreeningDetailResponse(BaseModel):
     risk_reasons: List[Dict[str, Any]]
     signal_breakdown: Dict[str, float]
     audit_trail: List[AuditEventSchema]
+    blockchain_anchor: Optional[Dict[str, Any]] = None
 
     class Config:
         from_attributes = True
+
+
+class UnsupportedDocumentResponse(BaseModel):
+    status: str = "UNSUPPORTED_DOCUMENT"
+    message: str = "Unsupported document type. SatyaScan currently supports Passport and Visa only. Please upload a valid Passport or Visa."
+    supported_types: List[str] = ["PASSPORT", "VISA"]
+    detected_type: Optional[str] = None
+    indicators: Optional[List[str]] = None
+
+
+class InconclusiveDocumentResponse(BaseModel):
+    status: str = "UNABLE_TO_VERIFY"
+    message: str = "The submitted document could not be reliably verified. Please provide a clearer image of a valid Passport or Visa."
+    supported_types: List[str] = ["PASSPORT", "VISA"]
 
 
 # --- Watchlist Schemas ---

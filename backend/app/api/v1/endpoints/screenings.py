@@ -5,7 +5,7 @@ Protected by JWT authentication, RBAC, input validation, and rate limiting.
 """
 
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -15,19 +15,23 @@ import re
 
 from backend.app.models.database import (
     get_db, Screening, ExtractedField, ValidationFinding,
-    TamperFinding, FaceResult, IdentityMatch, AuditEvent, User
+    TamperFinding, FaceResult, IdentityMatch, AuditEvent, User, BlockchainAnchor
 )
-from backend.app.schemas.screening import ScreeningDetailResponse, ScreeningSummaryResponse
+from backend.app.schemas.screening import (
+    ScreeningDetailResponse, ScreeningSummaryResponse,
+    UnsupportedDocumentResponse, InconclusiveDocumentResponse
+)
 from backend.app.core.config import settings
 from backend.app.core.security import (
     validate_uploaded_image_bytes, sanitize_filename, get_current_user
 )
+from backend.app.core.permissions import check_checkpoint_access
 from backend.app.core.rate_limiter import rate_limit_screening
 from backend.app.services.orchestrator import screening_orchestrator
 
 router = APIRouter(prefix="/screenings", tags=["Screenings"])
 
-ALLOWED_DOC_TYPES = {"PASSPORT", "VISA", "NATIONAL_ID"}
+ALLOWED_DOC_TYPES = {"PASSPORT", "VISA"}
 SCREENING_ID_REGEX = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
 
 
@@ -50,23 +54,37 @@ async def create_screening(
     document_file: UploadFile = File(...),
     live_selfie_file: Optional[UploadFile] = File(None),
     document_type: str = Form("PASSPORT"),
+    checkpoint_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
     Executes automated screening on uploaded travel document and optional live selfie.
     Requires authenticated officer session. Enforces file size, magic header,
-    image decode validation, and rate limits.
+    image decode validation, checkpoint anti-spoofing, and document classifier gate.
     """
-    # 1. Validate document type input
+    # 1. Anti-Spoofing: Checkpoint identity must strictly match authenticated officer session
+    if checkpoint_id and current_user.checkpoint_id:
+        clean_cp = checkpoint_id.strip()
+        if clean_cp != current_user.checkpoint_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Checkpoint identity mismatch. You are authenticated at checkpoint '{current_user.checkpoint_id}' and cannot submit screenings for checkpoint '{clean_cp}'."
+            )
+
+    # 2. Validate requested document type input (Only PASSPORT and VISA allowed)
     norm_doc_type = document_type.strip().upper()
     if norm_doc_type not in ALLOWED_DOC_TYPES:
-        raise HTTPException(
+        return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported document type '{document_type}'. Allowed: {', '.join(ALLOWED_DOC_TYPES)}"
+            content={
+                "status": "UNSUPPORTED_DOCUMENT",
+                "message": "Unsupported document type. SatyaScan currently supports Passport and Visa only. Please upload a valid Passport or Visa.",
+                "supported_types": sorted(list(ALLOWED_DOC_TYPES))
+            }
         )
 
-    # 2. Validate and save document file
+    # 3. Validate and save document file securely
     doc_bytes = await document_file.read()
     validate_uploaded_image_bytes(doc_bytes, document_file.filename or "upload.jpg")
 
@@ -81,7 +99,7 @@ async def create_screening(
     with open(doc_path, "wb") as f:
         f.write(doc_bytes)
 
-    # 3. Validate and save live selfie if provided
+    # 4. Validate and save live selfie if provided
     live_path = None
     if live_selfie_file and live_selfie_file.filename:
         live_bytes = await live_selfie_file.read()
@@ -97,13 +115,38 @@ async def create_screening(
         with open(live_path, "wb") as f:
             f.write(live_bytes)
 
-    # 4. Execute full screening pipeline with operator attribution
+    # 5. Document Classifier Gate: Independently validate document type BEFORE heavy processing
+    classification = screening_orchestrator.document_classifier.classify_image(doc_path)
+    if not classification.get("is_supported", False):
+        try:
+            if os.path.exists(doc_path):
+                os.remove(doc_path)
+            if live_path and os.path.exists(live_path):
+                os.remove(live_path)
+        except Exception:
+            pass
+
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "status": "UNSUPPORTED_DOCUMENT" if classification["verdict"] == "UNSUPPORTED_DOCUMENT" else "UNABLE_TO_VERIFY",
+                "message": classification.get("message", "Unsupported document type. SatyaScan currently supports Passport and Visa only. Please upload a valid Passport or Visa."),
+                "supported_types": sorted(list(ALLOWED_DOC_TYPES)),
+                "detected_type": classification.get("detected_type"),
+                "indicators": classification.get("indicators", [])
+            }
+        )
+
+    # Backend enforces genuine verified document type
+    verified_doc_type = classification["verdict"]
+
+    # 6. Execute full dedicated screening pipeline with authentic operator attribution
     result = screening_orchestrator.process_screening(
         db=db,
         doc_image_path=doc_path,
         live_image_path=live_path,
         operator_id=current_user.id,
-        doc_type=norm_doc_type,
+        doc_type=verified_doc_type,
         checkpoint_id=getattr(current_user, "checkpoint_id", None),
         checkpoint_name=getattr(current_user, "checkpoint_name", None)
     )
@@ -174,13 +217,19 @@ def list_screenings(
 ):
     """
     Lists recent screening records with pagination for authenticated officers.
+    Enforces station-level filtering: Officers view records from their station only;
+    Supervisors and Admins possess multi-station operational visibility.
     """
     safe_limit = max(1, min(limit, 100))
     safe_offset = max(0, offset)
 
+    query = db.query(Screening)
+    user_role = (current_user.role or "OFFICER").upper()
+    if user_role == "OFFICER" and current_user.checkpoint_id:
+        query = query.filter(Screening.checkpoint_id == current_user.checkpoint_id.strip())
+
     screenings = (
-        db.query(Screening)
-        .order_by(Screening.created_at.desc())
+        query.order_by(Screening.created_at.desc())
         .offset(safe_offset)
         .limit(safe_limit)
         .all()
@@ -196,12 +245,15 @@ def get_screening_detail(
 ):
     """
     Retrieves complete case dossier for a validated screening ID.
-    Requires authentication.
+    Requires authentication and checkpoint access authorization.
     """
     clean_id = validate_screening_id(screening_id)
     screening = db.query(Screening).filter(Screening.id == clean_id).first()
     if not screening:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screening record not found")
+
+    # Enforce checkpoint isolation policy
+    check_checkpoint_access(current_user, screening, db, resource_type="screening_detail")
 
     fields = (
         db.query(ExtractedField)
@@ -234,6 +286,29 @@ def get_screening_detail(
         .order_by(AuditEvent.id.asc())
         .all()
     )
+    anchor = (
+        db.query(BlockchainAnchor)
+        .filter(BlockchainAnchor.screening_id == clean_id)
+        .first()
+    )
+    anchor_dict = None
+    if anchor:
+        anchor_dict = {
+            "id": anchor.id,
+            "screening_id": anchor.screening_id,
+            "document_hash": anchor.document_hash,
+            "result_hash": anchor.result_hash,
+            "transaction_id": anchor.transaction_id,
+            "ledger_asset_id": anchor.ledger_asset_id,
+            "anchor_timestamp": anchor.anchor_timestamp.isoformat() if anchor.anchor_timestamp else None,
+            "network": anchor.network,
+            "channel": anchor.channel,
+            "chaincode": anchor.chaincode,
+            "status": anchor.status,
+            "verification_timestamp": anchor.verification_timestamp.isoformat() if anchor.verification_timestamp else None,
+            "verification_message": anchor.verification_message,
+            "created_at": anchor.created_at.isoformat() if anchor.created_at else None
+        }
 
     reconstructed_fields = []
     for f in fields:
@@ -243,6 +318,8 @@ def get_screening_detail(
             "visual_value": f.visual_value,
             "mrz_value": f.mrz_value,
             "confidence": f.confidence,
+            "ocr_engine": getattr(f, "ocr_engine", None),
+            "validation": getattr(f, "validation", "VALID"),
             "match_status": f.match_status,
             "bounding_box": bbox
         })
@@ -271,6 +348,7 @@ def get_screening_detail(
         "risk_score": screening.risk_score,
         "risk_band": screening.risk_band,
         "recommendation": screening.recommendation,
+        "ocr_engine": getattr(screening, "ocr_engine", None),
         "execution_latency_ms": screening.execution_latency_ms,
         "doc_image_url": f"/api/v1/screenings/media/{screening.id}/doc",
         "live_image_url": f"/api/v1/screenings/media/{screening.id}/live" if screening.live_image_path else None,
@@ -292,7 +370,8 @@ def get_screening_detail(
             "tamper_forensics": max([t.score for t in tamper_findings], default=0.0),
             "face_verification": 10.0 if face_res and face_res.verification_result == "MATCH" else 80.0 if face_res else 0.0
         },
-        "audit_trail": audit_events
+        "audit_trail": audit_events,
+        "blockchain_anchor": anchor_dict
     }
 
 
@@ -317,6 +396,9 @@ def get_screening_media(
     screening = db.query(Screening).filter(Screening.id == clean_id).first()
     if not screening:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screening record not found")
+
+    # Enforce checkpoint isolation policy
+    check_checkpoint_access(current_user, screening, db, resource_type="media_asset")
 
     file_path = None
     if media_type == "doc":

@@ -1,196 +1,234 @@
-# SatyaScan — Security Policy & Security Architecture Dossier
+# SatyaScan — Formal Security Policy & Threat Model Architecture Dossier
 **Problem Statement:** SIH26188 · Ministry of Home Affairs / Sashastra Seema Bal (SSB), Police II Division  
+**Theme:** Blockchain & Cybersecurity  
 **System Name:** SatyaScan Document Integrity & Identity Verification Workstation  
 **Classification:** Security-Hardened SIH Prototype  
-**Philosophy:** Secure by Default · Privacy by Design · Auditable · Explainable  
+**Philosophy:** Zero-Trust · Secure by Default · Privacy by Design · Defense-in-Depth · Cryptographically Auditable  
 
 ---
 
-## Security Controls — Judge Summary
-
-An executive summary of defensive security controls implemented in the SatyaScan SIH prototype:
-
-| Security Domain | Implemented Prototype Control | Concrete Code Reference |
-| :--- | :--- | :--- |
-| **Authentication** | JWT Bearer authentication (`HS256`) with strict signature, expiry, and format validation. Seamless in-memory token manager in client. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L40-L115), [`frontend/src/lib/api.ts`](file:///Users/princemahto/Downloads/SatyaScan/frontend/src/lib/api.ts#L17-L65) |
-| **Password Security** | Direct `bcrypt` password hashing with cost factor 12. Password values never logged or returned in responses. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L25-L38) |
-| **Authorization / RBAC** | Role-Based Access Control (`OFFICER`, `SUPERVISOR`, `ADMIN`). Sensitive administrative actions (e.g. watchlist additions) restricted to `SUPERVISOR`+. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L118-L128), [`backend/app/api/v1/endpoints/watchlist.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/api/v1/endpoints/watchlist.py#L32-L49) |
-| **File Upload Security** | 10MB upload cap, strict magic header validation (`JPEG`, `PNG`, `WEBP`), PIL/OpenCV structural decode verification, and dimension caps (`<= 5000px` / 25M pixels) for decompression bomb protection. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L182-L252) |
-| **Filesystem Isolation** | User-controlled filenames discarded; UUID-only randomized storage filenames (`doc_{uuid}.jpg`); path traversal sequences stripped. Static `/storage` route completely removed. | [`backend/app/api/v1/endpoints/screenings.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/api/v1/endpoints/screenings.py#L55-L75), [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L125-L135) |
-| **API & CORS Security** | Backend Pydantic validation on all requests; restricted CORS whitelist without wildcard credentials; in-memory sliding window rate limiting on sensitive routes. | [`backend/app/core/rate_limiter.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/rate_limiter.py#L20-L75), [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L115-L125) |
-| **HTTP Defense Headers** | Custom middleware injecting `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`. | [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L100-L113) |
-| **Privacy & PII Protection** | Zero client-side storage of biometrics in `localStorage` or `sessionStorage`. Service worker strictly excludes sensitive media, reports, and API responses. PII masking (`mask_document_number`, `mask_full_name`, `mask_date_of_birth`). | [`frontend/public/sw.js`](file:///Users/princemahto/Downloads/SatyaScan/frontend/public/sw.js#L25-L42), [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L131-L175) |
-| **Audit Integrity** | SHA-256 cryptographically chained ledger where each event hashes `previous_hash`, `timestamp`, `actor`, `event_type`, and `payload_hash`. Retroactive modifications immediately trigger verification failure. | [`backend/app/services/audit_service.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/audit_service.py#L25-L135) |
-| **Database Security** | SQLAlchemy parameterized queries / ORM preventing SQL injection; controlled transaction rollback on exceptions. No exposure of SQLite file via static routes. | [`backend/app/models/database.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/models/database.py#L165-L188) |
-| **Error Security** | Client-safe error messages with masked technical details; diagnostic stack traces logged securely server-side; global exception handler prevents traceback leakage. | [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L125-L135), [`backend/app/services/orchestrator.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/orchestrator.py#L100-L135) |
-| **Report / PDF Safety** | ReportLab PDF generator safely escapes all dynamic field strings, risk findings, and IDs with `html.escape()`, preventing XML parsing crashes and markup injection. | [`backend/app/services/report_generator.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/report_generator.py#L150-L285) |
-| **Offline Architecture** | Completely local inference pipeline (PaddleOCR/Tesseract, OpenCV ELA, Cosine Similarity, FAISS index). Zero mandatory external cloud AI APIs; sensitive identity assets remain local to workstation. | [`backend/app/services/orchestrator.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/orchestrator.py#L40-L85) |
-
----
-
-## 1. Threat Model
-
-The SatyaScan workstation is engineered to operate in high-throughput border checkpoints and security stations (e.g. Sashastra Seema Bal frontier checkpoints). The threat model evaluates threats across 13 core vectors:
+## Connected Platform Architecture
 
 ```
-[External Attacker / Disguised File]
-         │
-         ├── (T-01: Malicious Polyglot) ──────► Magic Bytes + PIL Image Verify
-         ├── (T-02: Decompression Bomb) ──────► Dimension Caps (<=5000px, 25M px)
-         ├── (T-03: Path Traversal) ──────────► Basename Isolation + UUID File Paths
-         ├── (T-04: Static Exposure) ─────────► Closed /storage static route
-         └── (T-06: Brute Force Login) ───────► In-Memory Sliding Window Rate Limiting (10/min)
-
-[Network / Transport Boundary]
-         ├── (T-07: Forged / alg=none JWT) ───► Explicit HS256 validation + Signature check
-         ├── (T-11: Stack Trace Leakage) ─────► Global Sanitized Error Handler
-         └── (T-12: Cross-Origin Spoofing) ───► Strict Origin Whitelist (No wildcard credentials)
-
-[Checkpoint Workstation / Storage]
-         ├── (T-05: Privilege Escalation) ────► RBAC (OFFICER vs SUPERVISOR vs ADMIN)
-         ├── (T-08: Biometric Caching) ───────► In-memory tokens; SW excludes all media
-         ├── (T-09: PDF XML Injection) ───────► Complete html.escape() across report cells
-         └── (T-10: Database Tampering) ──────► SHA-256 Cryptographically Chained Ledger
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                       CYBERSECURITY LAYER                                         │
+│  - Strict JWT (HS256) with Header Verification (alg=none & RS256 confusion rejected)             │
+│  - Centralized RBAC (OFFICER, SUPERVISOR, ADMIN) + Fine-Grained Permissions (permissions.py)      │
+│  - Server-Side Station Scoping: Station Isolation & IDOR Defense (check_checkpoint_access)        │
+│  - Magic Bytes, Image Decode Integrity, and Decompression Bomb Defense (5000px / 25M px limit)    │
+│  - HTTP Defense Headers (nosniff, DENY, referrer-policy) + Whitelisted CORS (No Wildcard)        │
+│  - Thread-Safe Sliding Window Rate Limiting (Login: 10/min, Screening: 20/min, Reports: 30/min)  │
+└────────────────────────────────────────────────┬──────────────────────────────────────────────────┘
+                                                 │ Authenticated & Authorized Session
+                                                 ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   DOCUMENT & IDENTITY SCREENING                                   │
+│  - Input Validation & Anti-Spoofing: Client document_type and checkpoint_id strictly untrusted    │
+│  - Classifier Gate: Real image classification (Passport/Visa only; Aadhaar/PAN/DL rejected)       │
+│  - Classical Forensics: Error Level Analysis (ELA), Noise Residual, Copy-Move Cloned Region       │
+│  - OCR Extraction & MRZ Verification: ICAO 9303 Doc 9303 TD3 7-3-1 Checksum & Cross-Validation   │
+│  - Classical Face Verification: Gabor-LBP Cosine Similarity + FAISS Multi-Identity Re-use Search │
+│  - Calibrated Risk Engine: Deterministic weighted risk score [0..100] and Recommendation Gate     │
+└────────────────────────────────────────────────┬──────────────────────────────────────────────────┘
+                                                 │ Evidence Serialization & Hashing
+                                                 ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                               LOCAL SHA-256 TAMPER-EVIDENT AUDIT                                  │
+│  - Append-Only Cryptographically Chained Ledger (previous_hash || timestamp || payload_hash)      │
+│  - Immutable Audit Events: DOC_UPLOAD, OCR_DONE, RISK_EVAL, ACCESS_DENIED, LOGIN_FAILURE, ...    │
+│  - Retroactive Tamper Detection: verify_audit_chain detects altered rows, hashes, or payload edits│
+└────────────────────────────────────────────────┬──────────────────────────────────────────────────┘
+                                                 │ Cryptographic Digests (Zero PII)
+                                                 ▼
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                        PERMISSIONED BLOCKCHAIN ANCHOR (HYPERLEDGER FABRIC)                        │
+│  - Private Consortium Ledger: satyascan-channel @ Org1MSP (Chaincode: screening_anchor.go)       │
+│  - Core Privacy Principle: "Evidence stays off-chain. Cryptographic proof goes on-chain."         │
+│  - On-Chain Anchors: Irreversible SHA-256 Document Hash + Canonical Result Hash (Zero PII)       │
+│  - Honest Offline Detection: Returns status "UNAVAILABLE" when peer is unreachable (No fakes)    │
+│  - Cross-Verification: verify_anchor compares local evidence digests against on-chain records     │
+└───────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Authentication & Checkpoint Binding Architecture
+## 1. Executive Summary of Implemented Security Controls
 
-1. **Checkpoint Identity & Workstation Binding**:
-   - Each border station operates under a dedicated checkpoint identity.
-   - 8 canonical border checkpoints are configured for the SIH prototype:
-     1. Delhi Airport Immigration Checkpoint (`CP-DEL-AIR`, `delhi_airport`)
-     2. Attari Border Checkpoint (`CP-ATTARI`, `attari_border`)
-     3. Raxaul Border Checkpoint (`CP-RAXAUL`, `raxaul_border`)
-     4. Jogbani Border Checkpoint (`CP-JOGBANI`, `jogbani_border`)
-     5. Sunauli Border Checkpoint (`CP-SUNAULI`, `sunauli_border`)
-     6. Rupaidiha Border Checkpoint (`CP-RUPAIDIHA`, `rupaidiha_border`)
-     7. Panitanki Border Checkpoint (`CP-PANITANKI`, `panitanki_border`)
-     8. Petrapole Border Checkpoint (`CP-PETRAPOLE`, `petrapole_border`)
-   - **Strict Checkpoint-User Binding**: When an officer selects a checkpoint during login, the system verifies that the operator username belongs to that checkpoint. Mismatched credentials are rejected with HTTP 401 (`"Invalid checkpoint credentials."`).
-   - Successful authentications record an immutable `LOGIN_SUCCESS` event in the cryptographic audit ledger.
-
-2. **Password Security**:
-   - Stored strictly as `bcrypt` hashes with cost factor 12.
-   - Passwords are never logged, displayed, or serialized into responses.
-   - Input passwords truncated to standard 72-byte bcrypt limit to prevent memory-exhaustion hashing attacks.
-   - Demo password for canonical checkpoints is `Demo@123` (bcrypt-hashed).
-
-3. **Timing-Insensitive Error Messaging**:
-   - Login failures return generic: `"Invalid username or password credentials."` or `"Invalid checkpoint credentials."`
-   - Prevents username enumeration.
-
-4. **Demo Credential Disclosure**:
-   - All checkpoint accounts and seed credentials (`officer` / `officer123`, `supervisor` / `super123`) are explicitly flagged in code, UI, and documentation as **EVALUATION / DEMO ONLY**.
+| Security Domain | Implemented Prototype Control | Concrete Code Reference | Automated Test Suite |
+| :--- | :--- | :--- | :--- |
+| **Authentication** | JWT Bearer (`HS256`) with strict header inspection. Explicitly rejects `alg=none`, RS256/asymmetric confusion, expired tokens, and missing claims. Client uses in-memory closure tokens. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L45-L120) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L140-L215) (T-01, T-02) |
+| **Password Security** | Direct `bcrypt` with explicit work factor 12. 72-byte truncation prevents memory exhaustion. Zero passwords/hashes returned in responses or logs. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L30-L44) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L525-L560) (T-10) |
+| **Authorization / RBAC** | Centralized permissions framework (`backend/app/core/permissions.py`) with roles (`OFFICER`, `SUPERVISOR`, `ADMIN`). Strict privilege boundaries on watchlists and cases. | [`backend/app/core/permissions.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/permissions.py) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L220-L265) (T-03) |
+| **Station Isolation (IDOR)** | Server-side checkpoint scoping via `check_checkpoint_access`. Officers strictly bound to own checkpoint; cross-station access forbidden (HTTP 403) and logged as `ACCESS_DENIED`. Supervisors possess multi-station oversight. | [`backend/app/core/permissions.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/permissions.py#L85-L141), [`backend/app/api/v1/endpoints/screenings.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/api/v1/endpoints/screenings.py) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L270-L370) (T-04) |
+| **File Upload Defense** | 10MB payload cap, magic header byte verification (`JPEG`, `PNG`, `WEBP`), PIL/OpenCV structural decode check, and dimension ceilings (`<= 5000px`, 25M pixels) for decompression bomb defense. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L190-L267) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L375-L435) (T-05) |
+| **Filesystem Isolation** | Directory traversal sequences stripped via `sanitize_filename`. User filenames replaced with randomized UUID paths (`doc_{uuid}.jpg`). Public static `/storage` route completely removed. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L180-L190), [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L170-L177) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L440-L465) (T-06, T-15) |
+| **Rate Limiting (DoS)** | Thread-safe in-memory sliding window rate limiter on logins (10/min), screenings (20/min), and reports (30/min). Protects against credential stuffing and CPU exhaustion. | [`backend/app/core/rate_limiter.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/rate_limiter.py) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L470-L485) (T-07) |
+| **Input Validation & SQLi** | Pydantic v2 schemas and strict regex validation (`^[A-Za-z0-9_-]{3,64}$`) on IDs; SQLAlchemy ORM parameterized queries prevent SQL injection. | [`backend/app/api/v1/endpoints/screenings.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/api/v1/endpoints/screenings.py#L34-L45) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L490-L505) (T-08) |
+| **XSS & PDF Escaping** | Full HTML/XML entity sanitization (`html.escape()`) across all dynamic fields, risk notes, and officer attributions in ReportLab PDF generation. | [`backend/app/services/report_generator.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/report_generator.py) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L510-L540) (T-09) |
+| **CORS & Network** | Explicit CORS whitelist without wildcard credentials. Disallows `*` when credentials are required. | [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L129-L137) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L565-L575) (T-11) |
+| **Privacy & PII Protection** | PII masking (`mask_document_number`, `mask_full_name`, `mask_date_of_birth`). Service worker explicitly excludes sensitive media, reports, and API caches. Automated pre-blockchain PII validator. | [`backend/app/core/security.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/security.py#L135-L173), [`backend/app/services/fabric_service.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/fabric_service.py#L90-L116) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L580-L605) (T-12) |
+| **Audit Integrity** | SHA-256 cryptographically chained ledger linking every event to the preceding event's hash. Verifies integrity from genesis to head. Audits `LOGIN_FAILURE`, `ACCESS_DENIED`, `WATCHLIST_CHANGE`. | [`backend/app/services/audit_service.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/audit_service.py) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L610-L660) (T-13) |
+| **Permissioned Blockchain** | Hyperledger Fabric Go contract (`screening_anchor.go`) and Python gateway. Anchors deterministic document hash and result hash. Discrepancy detector flags alterations. Transparent offline fallback. | [`blockchain/chaincode/screening_anchor/screening_anchor.go`](file:///Users/princemahto/Downloads/SatyaScan/blockchain/chaincode/screening_anchor/screening_anchor.go), [`backend/app/services/fabric_service.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/services/fabric_service.py) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L665-L705) (T-14) |
+| **HTTP Defense Headers** | Custom ASGI middleware injects `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`. | [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L116-L127) | [`tests/test_cybersecurity_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_cybersecurity_hardening.py#L710-L725) (T-15) |
+| **Error Handling & Traceback** | Global exception handlers log server-side diagnostics securely while returning standardized, non-leaking JSON error details to callers. | [`backend/app/main.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/main.py#L140-L147) | [`tests/test_security_hardening.py`](file:///Users/princemahto/Downloads/SatyaScan/tests/test_security_hardening.py) |
 
 ---
 
-## 3. JWT & Session Security
+## 2. Threat Model Matrix (T-01 to T-15)
 
-1. **Cryptographic Algorithm**:
-   - Hardcoded to `HS256` explicitly.
-   - Rejects unsigned tokens or tokens with `alg="none"`.
-   - Encodes checkpoint metadata (`checkpoint_id`, `checkpoint_name`) in the signed payload.
+The formal threat model analyzes each attack vector, attack surface, implemented defense, automated verification test, and residual risk:
 
-2. **Key Hygiene**:
-   - `.env.example` contains placeholder tokens instead of real production keys.
-   - `JWT_SECRET` is drawn from the environment variable, with development fallback.
-   - When running in production (`ENVIRONMENT=production` or `STRICT_AUTH=true`), unauthenticated requests are strictly rejected with `401 Unauthorized`.
-
-3. **Token Storage & XSS Mitigation**:
-   - The Next.js frontend maintains the active token in **JavaScript memory (closure scope)**.
-   - Neither the JWT token nor biometric data is written to `localStorage` or `sessionStorage`.
-   - Workstation session terminates cleanly on Logout or on token expiry (HTTP 401 triggers immediate return to checkpoint login screen).
-
----
-
-## 4. Authorization & RBAC
-
-Endpoints enforce role-based segregation of duties:
-
-| Role | Permitted Actions | Prohibited Actions |
-| :--- | :--- | :--- |
-| **OFFICER** | Run document screenings, view assigned cases, stream media assets, download PDF dossiers, verify audit chains. | Cannot add watchlist records, cannot alter system roles. |
-| **SUPERVISOR** | All Officer capabilities + Add/modify reference watchlist records, notarize audit roots, review escalated cases. | Cannot modify immutable audit ledger records. |
-| **ADMIN** | System administration, user provisioning, station configuration. | Cannot retroactively modify historical audit records. |
+| Threat ID | Threat Category | Attack Vector & Surface | Implemented Defense & Architecture | Automated Verification Test | Residual Risk & Production Hardening |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **T-01** | Authentication Bypass | Direct API access without Bearer token or with forged header. | Strict mode (`STRICT_AUTH=True`) mandates valid Bearer tokens for all protected routes; prototype fallback strictly limited to evaluation. | `test_t01_strict_auth_rejects_missing_token`, `test_t01_malformed_bearer_token_rejected` | Low. Production uses PKI smart cards or enterprise IdP. |
+| **T-02** | JWT Algorithm Confusion / Tampering | Attacker strips signature (`alg="none"`) or uses public key for HMAC confusion. | Strict pre-decode header inspection requires `alg == "HS256"`. Rejects `none`, RS256, and mismatched algorithms before decoding. | `test_t02_jwt_alg_none_rejected`, `test_t02_jwt_algorithm_confusion_rejected`, `test_t02_jwt_signature_tampering_rejected` | Negligible. Header inspection prevents library-level algorithm confusion. |
+| **T-03** | Privilege Escalation | Border officer attempts to add/modify watchlist entries or tamper with system roles. | Centralized Role-Based Access Control (`require_role(["SUPERVISOR", "ADMIN"])`). Officer receives immediate HTTP 403. | `test_t03_rbac_officer_cannot_add_watchlist`, `test_t03_rbac_supervisor_can_add_watchlist` | Negligible. Permissions enforced server-side. |
+| **T-04** | Insecure Direct Object Reference (IDOR) | Delhi Officer queries or updates Raxaul border screening dossier, media asset, or PDF. | Server-side checkpoint scoping (`check_checkpoint_access`). Verifies `user.checkpoint_id == screening.checkpoint_id`. Mismatch raises HTTP 403 and records `ACCESS_DENIED` in audit ledger. | `test_t04_delhi_officer_denied_raxaul_screening_detail`, `test_t04_delhi_officer_denied_raxaul_media_asset`, `test_t04_station_isolation_logs_access_denied_audit` | Negligible. Strict station isolation enforced on all entity lookups. |
+| **T-05** | Malicious Upload & Polyglots | Attacker uploads malicious script disguised as JPEG, or 100MB file, or 50,000px decompression bomb. | 10MB size cap, magic bytes inspection (`\xFF\xD8\xFF`, `\x89PNG`, `RIFF...WEBP`), PIL decode verification, and 5000px / 25M pixel dimension ceilings. | `test_t05_upload_fake_mime_polyglot_rejected`, `test_t05_upload_corrupt_image_bytes_rejected`, `test_t05_upload_decompression_bomb_rejected` | Low. Antivirus scanning container recommended for enterprise multi-tenant scale. |
+| **T-06** | Directory & Path Traversal | Filename containing `../../../../etc/passwd` in upload or media streaming route. | `sanitize_filename` strips path characters; disk files saved as random UUIDs (`doc_{uuid}.jpg`); realpath check restricts access to storage directory. | `test_t06_path_traversal_filename_sanitized`, `test_t06_media_path_traversal_prevented` | Negligible. UUID filenames completely decouple upload names from disk. |
+| **T-07** | Denial of Service (DoS) | Attacker floods login or screening endpoint to exhaust CPU or OCR worker resources. | In-memory thread-safe sliding window rate limiting (Login: 10/min, Screening: 20/min, Reports: 30/min). HTTP 429 returned on breach. | `test_t07_rate_limiter_blocks_excessive_login_attempts` | Medium. For multi-replica Kubernetes clusters, swap in-memory limiter with Redis sliding window. |
+| **T-08** | SQL Injection | Attacker supplies `' OR '1'='1` in screening ID or query parameters. | Strict regex validation (`^[A-Za-z0-9_-]{3,64}$`) on IDs; all queries use SQLAlchemy ORM parameterized statements. | `test_t08_sql_injection_in_screening_id_handled` | Negligible. Parameterized ORM prevents query injection. |
+| **T-09** | XSS / Template Injection | Attacker crafts MRZ/visual name with `<script>` tags to execute during PDF generation or UI render. | ReportLab generator explicitly escapes all dynamic text with `html.escape()`. React escapes JSX text bindings by default. | `test_t09_xss_and_xml_in_pdf_report_sanitized` | Negligible. Complete escaping verified in PDF test. |
+| **T-10** | Password Cracking | Brute-force credential stuffing or offline hash cracking via rainbow tables. | Direct `bcrypt` with cost factor 12 ($2^{12}$ iterations). Timing-safe generic error responses prevent username enumeration. | `test_t10_bcrypt_work_factor_12`, `test_t10_timing_safe_error_messages` | Low. Multi-factor authentication (MFA) recommended for production border officers. |
+| **T-11** | CORS Misconfiguration | Attacker website initiates cross-origin authenticated requests from browser. | Explicit whitelist of allowed origins (`http://localhost:3000`, `http://127.0.0.1:3000`). Wildcard `*` strictly disallowed with credentials. | `test_t11_cors_disallows_wildcard_with_credentials` | Negligible. Strict origin matching enforced by FastAPI CORS middleware. |
+| **T-12** | PII & Biometric Leakage | Passenger names, DOBs, passport numbers, or raw face crops leaked to logs or blockchain. | Masking functions for UI/logs (`Z12***67`, `A***N S****A`). Automated validator blocks PII keys from blockchain anchor payloads. | `test_t12_pii_masking_utilities`, `test_t12_zero_pii_in_fabric_anchor_payload` | Low. Ensure encrypted at-rest storage for primary database in production. |
+| **T-13** | Audit Trail Tampering | Malicious insider alters database rows, changes timestamps, or deletes flagged screenings. | Cryptographically chained SHA-256 ledger. Each block links to previous hash. Verification algorithm detects any retroactively altered row or payload. | `test_t13_audit_trail_tamper_detection`, `test_t13_login_failure_event_recorded` | Low. Dual-notarization with Hyperledger Fabric seals hashes off-workstation. |
+| **T-14** | Blockchain Anchor Forgery | Corrupt operator claims document was verified on-chain when evidence was tampered. | Hyperledger Fabric anchor stores deterministic SHA-256 document and result hashes. Verification detects discrepancy between local and ledger records. | `test_t14_blockchain_verification_detects_discrepancy` | Low. Requires consensus endorsement from peer organization. |
+| **T-15** | Information Disclosure | Unhandled exception dumps Python tracebacks, module paths, or SQL queries to client. | Global ASGI exception handler catches unhandled exceptions, logs diagnostics securely, and returns standardized generic JSON error response. | `test_t15_security_headers_present`, `test_t15_static_storage_mount_closed` | Negligible. Diagnostic detail suppressed from public responses. |
 
 ---
 
-## 5. File Upload & Resource Exhaustion Defense
+## 3. Station Isolation & Checkpoint Binding Architecture
 
-Document and selfie uploads undergo multi-layer verification before hitting the filesystem or AI pipelines:
+Border security requires that officer credentials and workstation activity are strictly scoped to their assigned station. SatyaScan enforces **server-side checkpoint isolation**:
 
-1. **File Size Enforcement**: Caps file payload at `10 MB` (HTTP 413 on violation).
-2. **Extension Whitelist**: Only `.jpg`, `.jpeg`, `.png`, `.webp` allowed.
-3. **Magic Byte Verification**: Verifies magic bytes (`\xFF\xD8\xFF` for JPEG, `\x89PNG` for PNG, `RIFF...WEBP` for WebP).
-4. **Structural Image Decode Verification**: Decodes the byte stream using `PIL.Image.open().verify()` to detect truncated or corrupted files.
-5. **Decompression Bomb Protection**:
-   - `PIL.Image.MAX_IMAGE_PIXELS = 25_000_000`.
-   - Dimension ceiling: maximum width `<= 5000px`, maximum height `<= 5000px`, and total pixels `<= 25,000,000`.
-   - Rejects oversized dimensions with user-safe message: `"Document image exceeds the permitted processing dimensions."`
-6. **Filesystem Sanitization**:
-   - User filenames are sanitized with `sanitize_filename` (stripping directory traversal `../` or special characters).
-   - Saved to filesystem using random UUIDs (`doc_{uuid4}.jpg`), eliminating arbitrary file overwrites and path traversal.
+### 1. Canonical Border Checkpoints
+The SIH prototype configures 8 canonical operational stations representing key border posts and international immigration gates:
 
----
+| Code | Checkpoint Name | Location | Default Operator Username |
+| :--- | :--- | :--- | :--- |
+| `CP-DEL-AIR` | Delhi Airport Immigration Checkpoint | Delhi Airport (IGI) | `delhi_airport` |
+| `CP-ATTARI` | Attari Border Checkpoint | Attari, Punjab (Indo-Pak) | `attari_border` |
+| `CP-RAXAUL` | Raxaul Land Customs Station | Raxaul, Bihar (Indo-Nepal) | `raxaul_border` |
+| `CP-JOGBANI` | Jogbani Border Checkpoint | Jogbani, Bihar (Indo-Nepal) | `jogbani_border` |
+| `CP-SUNAULI` | Sunauli Border Checkpoint | Sunauli, UP (Indo-Nepal) | `sunauli_border` |
+| `CP-RUPAIDIHA`| Rupaidiha Border Checkpoint | Rupaidiha, UP (Indo-Nepal) | `rupaidiha_border` |
+| `CP-PANITANKI`| Panitanki Border Checkpoint | Panitanki, WB (Indo-Nepal) | `panitanki_border` |
+| `CP-PETRAPOLE`| Petrapole Integrated Check Post | Petrapole, WB (Indo-Bangladesh) | `petrapole_border` |
 
-## 6. Static Route Removal & Media Authorization
+### 2. Strict Checkpoint-User Binding on Login
+When authenticating at `/api/v1/auth/login`:
+- If `checkpoint_id` is supplied, the system verifies that `user.checkpoint_id == checkpoint.id`.
+- Mismatched logins are rejected with `HTTP 401 Unauthorized` and record a `LOGIN_FAILURE` audit ledger event.
+- The verified `checkpoint_id` and `checkpoint_name` are sealed in the signed JWT payload.
 
-- **Vulnerability Remediated**: The unauthenticated static directory mount `app.mount("/storage", ...)` was **completely removed**.
-- **Controlled Streaming**: Raw passport document images, live selfie captures, and ELA heatmaps are accessible exclusively via the authenticated endpoint `/api/v1/screenings/media/{screening_id}/{media_type}`.
-- Path traversal verification ensures real filesystem paths remain strictly within server-controlled directories.
-
----
-
-## 7. PII & Biometric Privacy
-
-1. **Data Minimization**:
-   - Sensitive document numbers are masked in database summaries and logs (e.g. `Z12****67`).
-   - Names and DOBs are masked in public displays (`A****N S****A`, `1990-**-**`).
-2. **Client-Side Privacy Boundary**:
-   - The browser Service Worker (`public/sw.js`) intercepts all network requests and explicitly excludes `/api/`, `/storage/`, `/reports/`, `/media/`, `selfie`, `passport`, `heatmap`, and `pdf` from browser caching.
-   - PII and biometric representations are never stored in browser offline caches.
+### 3. Server-Side Checkpoint Isolation (`check_checkpoint_access`)
+Every protected entity route (`GET /screenings/{id}`, `GET /screenings/media/{id}/{type}`, `GET /reports/{id}/pdf`, `GET /audit/{id}`, `PUT /cases/{id}/status`, `POST /blockchain/{id}/anchor`) invokes `check_checkpoint_access`:
+- **For OFFICER**: The officer's `checkpoint_id` must match the screening's `checkpoint_id`. If an officer at Delhi attempts to access a dossier originating from Raxaul, the server raises `HTTP 403 Forbidden` and appends an `ACCESS_DENIED` audit event with the officer's badge, username, and attempted resource.
+- **For SUPERVISOR / ADMIN**: Supervisory and administrative personnel possess authorized multi-station operational visibility across all checkpoints for oversight and escalation reviews.
 
 ---
 
-## 8. Audit Trail Integrity
+## 4. Centralized Role-Based Access Control (RBAC)
 
-The SatyaScan audit trail uses append-only cryptographic hash chaining:
+Defined in [`backend/app/core/permissions.py`](file:///Users/princemahto/Downloads/SatyaScan/backend/app/core/permissions.py):
 
-$$\text{Chain String} = \text{previous\_hash} \,\|\, \text{timestamp} \,\|\, \text{actor} \,\|\, \text{event\_type} \,\|\, \text{payload\_hash}$$
-$$\text{Event Hash} = \text{SHA-256}(\text{Chain String})$$
+```python
+# Fine-Grained Permissions
+PERM_SCREENING_CREATE = "screening:create"
+PERM_SCREENING_VIEW = "screening:view"
+PERM_CASE_REVIEW = "case:review"
+PERM_MEDIA_ACCESS = "media:access"
+PERM_REPORT_DOWNLOAD = "report:download"
+PERM_AUDIT_VIEW = "audit:view"
+PERM_AUDIT_VERIFY = "audit:verify"
+PERM_BLOCKCHAIN_ANCHOR = "blockchain:anchor"
+PERM_BLOCKCHAIN_VERIFY = "blockchain:verify"
+PERM_WATCHLIST_VIEW = "watchlist:view"
+PERM_WATCHLIST_MANAGE = "watchlist:manage"
+PERM_ANALYTICS_VIEW = "analytics:view"
+PERM_SYSTEM_ADMIN = "system:admin"
+```
 
-- **Integrity Guarantee**: If any historical row's payload, timestamp, or actor is modified, recomputing the chain from genesis produces a hash mismatch, alerting operators to data tampering.
-- **Local Cryptographic Notarization Adapter**: Generates deterministic notarization receipts certifying the state of the audit chain head.
+### Role-to-Permissions Mapping
+
+| Permission | OFFICER | SUPERVISOR | ADMIN | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| `screening:create` | ✓ | ✓ | ✓ | Submit documents and selfies for screening |
+| `screening:view` | ✓ (scoped) | ✓ (global) | ✓ (global) | View completed screening dossiers |
+| `media:access` | ✓ (scoped) | ✓ (global) | ✓ (global) | Stream original document/live/heatmap images |
+| `report:download` | ✓ (scoped) | ✓ (global) | ✓ (global) | Download official ReportLab PDF reports |
+| `audit:view` | ✓ (scoped) | ✓ (global) | ✓ (global) | View cryptographic audit ledger entries |
+| `audit:verify` | ✓ (scoped) | ✓ (global) | ✓ (global) | Verify unbroken SHA-256 hash chain |
+| `blockchain:anchor` | ✓ (scoped) | ✓ (global) | ✓ (global) | Anchor evidence hashes to Hyperledger Fabric |
+| `blockchain:verify` | ✓ (scoped) | ✓ (global) | ✓ (global) | Verify local hashes against on-chain record |
+| `watchlist:view` | ✓ | ✓ | ✓ | View synthetic reference watchlist entries |
+| `case:review` | ✗ | ✓ | ✓ | Modify case status (CLEARED, ESCALATED, etc.) |
+| `watchlist:manage` | ✗ | ✓ | ✓ | Add new watchlist records |
+| `system:admin` | ✗ | ✗ | ✓ | System configuration and user provisioning |
 
 ---
 
-## 9. Secure Error Handling
+## 5. Data Classification Policy
 
-1. **Server-Side Diagnostics**: Full tracebacks logged via Python `logging` with level `ERROR`.
-2. **Client-Facing Sanitization**: Clients receive standardized, safe messages:
-   - `"Screening could not be completed due to an internal processing error. Please retry or contact the administrator."`
-   - No filesystem paths, database queries, or module structures are disclosed.
-3. **State Guarantee**: In the event of a pipeline failure, transactions are rolled back, and the screening status is persisted as `FAILED` to prevent the frontend from remaining indefinitely stuck in a `PROCESSING` state.
+SatyaScan establishes a four-tier data classification policy enforcing privacy by design and data minimization:
 
----
-
-## 10. Known Limitations of the Prototype
-
-1. **In-Memory Rate Limiting**: The sliding-window rate limiter is stored in application memory. In a multi-node, load-balanced deployment, rate limits are not shared across processes without a distributed cache (e.g., Redis).
-2. **Local Cryptographic Notarization**: The current blockchain adapter creates deterministic local cryptographic receipts; it does not commit live transactions to an external public or consortium network.
-3. **Embedded Database**: Default execution utilizes local SQLite (`satyascan.db`). File-level access controls depend on operating system file permissions.
+| Classification Level | Examples | Storage Location | Protection Controls |
+| :--- | :--- | :--- | :--- |
+| **RESTRICTED — PII & Biometrics** | Raw passport document images, live selfies, face embeddings, full passenger names, DOBs, passport numbers. | **Local Workstation Only** (Never on-chain) | UUID filenames, no static route, PII masking (`Z12***67`), service worker cache exclusion. Excluded from blockchain payloads by automated validator. |
+| **INTERNAL OPERATIONAL** | Extracted OCR fields, MRZ parsed lines, quality metrics, forensic anomaly heatmaps, risk scores, officer notes. | **Local Database & Reports** | JWT-authenticated REST endpoints, station-scoped IDOR checks, ReportLab HTML/XML escaping. |
+| **AUDIT EVIDENCE — CRYPTOGRAPHIC** | SHA-256 document hash, canonical result hash, audit event hashes, chain digests. | **Local Ledger + Hyperledger Fabric** | Immutably chained in local database; anchored on-chain to private consortium channel (`satyascan-channel`). Zero PII. |
+| **PUBLIC / DEMO CONTEXT** | Checkpoint list, system health check, supported document types (`PASSPORT`, `VISA`). | **Public Endpoints** | Read-only endpoints, sanitized responses, rate-limited against scraping. |
 
 ---
 
-## 11. Production Hardening Requirements
+## 6. Two-Tier Provenance Architecture
 
-Prior to real-world operational border deployment, the following additional controls are recommended:
+```
+Screening Complete ──► Compute Deterministic SHA-256 Digests
+                             │
+            ┌────────────────┴────────────────┐
+            ▼                                 ▼
+   [Tier 1: Local SHA-256]         [Tier 2: Hyperledger Fabric]
+   - Event-by-event chaining       - Off-workstation proof
+   - Previous hash linkage         - satyascan-channel
+   - Full operational lifecycle    - Zero PII (digests only)
+   - Retroactive tamper detection  - Multi-peer endorsement
+```
 
-1. **TLS / HTTPS**: Deploy behind a TLS-terminating reverse proxy (Nginx / Envoy) with strict HSTS (`max-age=31536000; includeSubDomains; preload`).
-2. **External Identity Provider (IdP)**: Connect authentication to government enterprise IdPs (e.g., SAML 2.0 / OpenID Connect / PKI smart cards).
-3. **Hardware Security Module (HSM)**: Store JWT signing keys and cryptographic audit anchor keys within an HSM / TPM.
-4. **PostgreSQL with At-Rest Encryption**: Migrate from SQLite to PostgreSQL with transparent data encryption (TDE) and encrypted storage volumes.
-5. **Automated Biometric Purge / Data Retention Policies**: Enforce statutory retention schedules (e.g., automated purge of raw biometric imagery after 30 days).
-6. **Distributed Rate Limiter**: Upgrade in-memory rate limiting to distributed Redis token buckets.
+1. **Tier 1 — Local SHA-256 Cryptographic Hash Chain**:
+   - Manages granular lifecycle events (`DOC_UPLOADED`, `CLASSIFIER_PASSED`, `QUALITY_ASSESSED`, `OCR_EXTRACTED`, `MRZ_VERIFIED`, `FORENSICS_COMPLETED`, `FACE_VERIFIED`, `RISK_EVALUATED`, `ACCESS_DENIED`, `LOGIN_FAILURE`, `WATCHLIST_CHANGE`).
+   - Each event computes:
+     $$\text{Chain String} = \text{screening\_id} \,\|\, \text{previous\_hash} \,\|\, \text{timestamp} \,\|\, \text{actor} \,\|\, \text{event\_type} \,\|\, \text{payload\_hash}$$
+     $$\text{Event Hash} = \text{SHA-256}(\text{Chain String})$$
+   - `verify_audit_chain` verifies link-by-link continuity from genesis ($0^{64}$) to head.
+
+2. **Tier 2 — Hyperledger Fabric Blockchain Anchor**:
+   - Permissioned smart contract [`blockchain/chaincode/screening_anchor/screening_anchor.go`](file:///Users/princemahto/Downloads/SatyaScan/blockchain/chaincode/screening_anchor/screening_anchor.go).
+   - Anchors two deterministic SHA-256 digests:
+     1. `document_hash`: SHA-256 of uploaded raw document bytes.
+     2. `result_hash`: SHA-256 of canonical deterministic string (`screening_id|doc_hash|risk_band|checkpoint_id|1.0.0`).
+   - **Zero PII**: Strictly validated by `FabricAnchorService.validate_no_pii_in_payload`.
+   - **Graceful Fallback**: Returns `status: "UNAVAILABLE"` when peer is unreachable. Never fabricates fake transaction hashes.
+
+---
+
+## 7. Known Limitations of the Prototype
+
+1. **In-Memory Rate Limiter**: The sliding-window rate limiter runs in the Python process memory. In a distributed multi-replica deployment, rate limits must be shared across pods using Redis.
+2. **Local SQLite Primary Store**: The prototype uses SQLite with WAL mode. Enterprise production requires PostgreSQL with at-rest encryption (TDE).
+3. **Hyperledger Fabric Docker Dependency**: Full peer consensus execution requires Docker and Fabric binaries. In host environments lacking Docker, the service gracefully reports `status: "UNAVAILABLE"` while local SHA-256 auditing remains 100% active.
+
+---
+
+## 8. Production Hardening Checklist
+
+For transition from SIH prototype to operational border infrastructure:
+
+- [ ] **TLS Termination**: Deploy behind Nginx / Envoy reverse proxy with TLS 1.3 and HSTS (`max-age=31536000; includeSubDomains; preload`).
+- [ ] **Enterprise Identity Provider (IdP)**: Connect workstation login to MHA PKI smart cards or Government SSO (SAML 2.0 / OIDC).
+- [ ] **Hardware Security Module (HSM)**: Store JWT private signing keys and blockchain transaction signing keys in a FIPS 140-2 Level 3 HSM.
+- [ ] **Database Migration**: Migrate from SQLite to PostgreSQL with Transparent Data Encryption (TDE) and row-level security.
+- [ ] **Distributed Cache**: Replace in-memory rate limiter with a Redis cluster sliding window (`redis.call('zremrangebyscore', ...)`).
+- [ ] **Biometric Retention Schedule**: Implement automated TTL purge of raw facial imagery after statutory retention periods (e.g., 30 days).
+- [ ] **Dedicated Hyperledger Fabric Orderers & Peers**: Deploy multi-node Raft ordering service with Org1MSP (SSB), Org2MSP (Bureau of Immigration), and Org3MSP (MHA).

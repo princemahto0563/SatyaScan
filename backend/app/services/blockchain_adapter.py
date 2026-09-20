@@ -1,50 +1,66 @@
 """
-SatyaScan Cryptographic Notarization Adapter
-Provides an interface to notarize audit trail root digests via a simulated cryptographic ledger.
-Preserves strict privacy: NEVER publishes PII, images, or raw biometric embeddings to the ledger.
-In the SIH prototype, this generates local verifiable cryptographic receipts.
-In future production deployments, it connects to an external immutable consortium blockchain.
+SatyaScan Blockchain Adapter
+Integrates with Hyperledger Fabric permissioned ledger via FabricAnchorService.
+Maintains strict privacy: NEVER publishes PII, images, or raw biometric embeddings to the ledger.
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from datetime import datetime, timezone
-import hashlib
+from sqlalchemy.orm import Session
+
+from backend.app.models.database import SessionLocal
+from backend.app.services.fabric_service import FabricAnchorService
 
 
 class BlockchainAnchorAdapter:
     """
-    Local Cryptographic Notarization Adapter interface for certifying audit chain digests.
+    Adapter interface delegating to FabricAnchorService for permissioned blockchain anchoring.
     """
 
-    def __init__(self, network: str = "Local Cryptographic Notarization Adapter"):
+    def __init__(self, network: str = "Hyperledger Fabric (Private)"):
         self.network = network
-        self.version = "AnchorAdapter-v1.0"
+        self.version = "FabricAnchor-v1.0"
 
     def create_anchor_receipt(
         self,
         screening_id: str,
         audit_head_hash: str,
-        total_events: int
+        total_events: int,
+        db: Optional[Session] = None
     ) -> Dict[str, Any]:
         """
-        Generates a deterministic cryptographic receipt certifying the state of the audit trail.
-        In production, this submits a transaction carrying the 32-byte audit_head_hash
-        to a smart contract timestamping registry.
+        Delegates to FabricAnchorService for deterministic anchoring and receipt generation.
+        Never fabricates mock block numbers or fake transaction hashes.
         """
-        timestamp = datetime.now(timezone.utc)
-        payload = f"{screening_id}|{audit_head_hash}|{total_events}|{timestamp.isoformat()}"
-        tx_hash = "0x" + hashlib.sha256(payload.encode('utf-8')).hexdigest()
-        block_number = 19482000 + (hash(screening_id) % 10000)
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
 
-        return {
-            "anchored": True,
-            "screening_id": screening_id,
-            "network": self.network,
-            "notarized_root_hash": audit_head_hash,
-            "total_events_certified": total_events,
-            "transaction_hash": tx_hash,
-            "block_number": abs(block_number),
-            "timestamp": timestamp.isoformat(),
-            "privacy_compliance": "PASSED (Zero PII or biometric data committed to public ledger)",
-            "verification_status": "CONFIRMED_LOCAL_NOTARIZATION_RECEIPT"
-        }
+        try:
+            anchor = FabricAnchorService.create_anchor(
+                db=db,
+                screening_id=screening_id,
+                risk_band="LOW",
+                actor="SYSTEM_AUTOMATION"
+            )
+            return {
+                "anchored": anchor.get("status") == "VERIFIED",
+                "screening_id": screening_id,
+                "network": anchor.get("network", self.network),
+                "channel": anchor.get("channel", "satyascan-channel"),
+                "chaincode": anchor.get("chaincode", "screening_anchor"),
+                "status": anchor.get("status"),
+                "notarized_root_hash": anchor.get("result_hash"),
+                "document_hash": anchor.get("document_hash"),
+                "result_hash": anchor.get("result_hash"),
+                "total_events_certified": total_events,
+                "transaction_hash": anchor.get("transaction_id"),
+                "block_number": None,  # Never fabricated when offline
+                "timestamp": (anchor.get("anchor_timestamp") or datetime.now(timezone.utc)).isoformat(),
+                "privacy_compliance": "PASSED (Zero PII, biometric data, or image bytes on-chain)",
+                "verification_status": anchor.get("verification_message", "BLOCKCHAIN_ANCHOR_UNAVAILABLE")
+            }
+        finally:
+            if close_db:
+                db.close()

@@ -24,7 +24,7 @@ from backend.app.models.database import init_db, SessionLocal, User, ReferenceWa
 from backend.app.core.security import get_password_hash
 from backend.app.core.checkpoints import seed_checkpoints
 from backend.app.api.v1.endpoints import (
-    auth, screenings, cases, audit, reports, watchlist, analytics
+    auth, screenings, cases, audit, reports, watchlist, analytics, blockchain
 )
 
 logger = logging.getLogger("satyascan.server")
@@ -155,6 +155,7 @@ app.include_router(audit.router, prefix=api_prefix)
 app.include_router(reports.router, prefix=api_prefix)
 app.include_router(watchlist.router, prefix=api_prefix)
 app.include_router(analytics.router, prefix=api_prefix)
+app.include_router(blockchain.router, prefix=api_prefix)
 
 
 @app.get("/health", tags=["System"])

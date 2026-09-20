@@ -1,11 +1,15 @@
 """
 SatyaScan Master Screening Orchestrator
 Executes the full automated border screening pipeline:
-Quality Gate -> OCR -> MRZ -> Validation Engine -> Tamper Forensics ->
-Face Verification -> FAISS Multi-Identity Search -> Risk Fusion -> DB Persistence -> SHA-256 Audit Trail.
+Security & Quality Gate -> Document Classifier Gate ->
+Dedicated Passport Pipeline (ICAO Doc 9303 TD3 MRZ, 7-3-1 checks, VIZ cross-validation, forensics, biometrics, FAISS)
+OR Dedicated Visa Pipeline (Visa rules, validity date checks, stay duration, passport cross-check, forensics)
+-> Risk Fusion -> DB Persistence -> SHA-256 Cryptographic Audit Trail.
+Guarantees deterministic terminal states: COMPLETED, QUALITY_REJECTED, UNSUPPORTED_DOCUMENT,
+MANUAL_REVIEW_REQUIRED, UNABLE_TO_VERIFY, or FAILED.
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import os
 import time
 import uuid
@@ -27,12 +31,15 @@ from backend.app.models.database import (
 )
 from backend.app.services.audit_service import AuditService
 from ai.quality.quality_gate import DocumentQualityGate
+from ai.classifier.document_classifier import DocumentClassifier
 from ai.ocr.ocr_engine import OCREngine
 from ai.mrz.mrz_parser import MRZParser
+from ai.visa.visa_parser import VisaParser
 from ai.tamper.pipeline import TamperForensicsPipeline
 from ai.face.face_verifier import FaceVerifier
 from ai.duplicate.indexer import MultiIdentityIndexer
 from ai.risk.risk_engine import RiskEngine
+from backend.app.services.fabric_service import FabricAnchorService
 
 
 class ScreeningOrchestrator:
@@ -42,6 +49,7 @@ class ScreeningOrchestrator:
 
     def __init__(self):
         self.quality_gate = DocumentQualityGate()
+        self.document_classifier = DocumentClassifier()
         self.ocr_engine = OCREngine()
         self.tamper_pipeline = TamperForensicsPipeline()
         self.face_verifier = FaceVerifier()
@@ -51,7 +59,6 @@ class ScreeningOrchestrator:
 
     def _seed_synthetic_gallery(self):
         """Seeds FAISS index with initial synthetic identities for duplicate detection."""
-        # Add a synthetic watchlist/gallery entry: RAHUL VERMA (DEMO-006)
         rng = np.random.RandomState(42)
         emb1 = rng.randn(512).astype(np.float32)
         emb1 /= np.linalg.norm(emb1)
@@ -97,14 +104,13 @@ class ScreeningOrchestrator:
                 doc_image_path=doc_image_path,
                 live_image_path=live_image_path,
                 operator_id=operator_id,
-                doc_type=doc_type,
+                requested_doc_type=doc_type,
                 checkpoint_id=checkpoint_id,
                 checkpoint_name=checkpoint_name
             )
         except Exception as exc:
             db.rollback()
             latency_ms = round((time.time() - start_time) * 1000.0, 1)
-            error_msg = str(exc)
             logger.error(f"[SatyaScan Screening] Pipeline failure for {screening_id}: {exc}", exc_info=True)
 
             try:
@@ -121,6 +127,7 @@ class ScreeningOrchestrator:
                     recommendation="Screening could not be completed due to an internal processing error. Manual inspection required.",
                     doc_image_path=doc_image_path,
                     live_image_path=live_image_path,
+                    ocr_engine=None,
                     execution_latency_ms=latency_ms
                 )
                 db.add(fail_rec)
@@ -146,7 +153,7 @@ class ScreeningOrchestrator:
         doc_image_path: str,
         live_image_path: Optional[str] = None,
         operator_id: Optional[int] = None,
-        doc_type: str = "PASSPORT",
+        requested_doc_type: str = "PASSPORT",
         checkpoint_id: Optional[str] = None,
         checkpoint_name: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -155,36 +162,117 @@ class ScreeningOrchestrator:
             db, screening_id, "DOCUMENT_UPLOADED",
             {
                 "file": os.path.basename(doc_image_path),
-                "doc_type": doc_type,
+                "requested_type": requested_doc_type,
                 "checkpoint_id": checkpoint_id,
                 "checkpoint_name": checkpoint_name
             }
         )
 
-        # 1. Quality Gate
+        # 1. Quality Gate Evaluation
         quality_res = self.quality_gate.assess_image(doc_image_path)
         AuditService.record_event(
             db, screening_id, "QUALITY_GATE_EVALUATED",
             {"verdict": quality_res["verdict"], "score": quality_res["overall_score"]}
         )
 
-        # 2. OCR Extraction
+        # If quality is strictly rejected (corrupt/empty/degraded)
+        if quality_res.get("verdict") in ["REJECTED"] or not quality_res.get("is_acceptable", True):
+            return self._handle_quality_rejection(
+                db=db,
+                screening_id=screening_id,
+                start_time=start_time,
+                doc_image_path=doc_image_path,
+                live_image_path=live_image_path,
+                operator_id=operator_id,
+                checkpoint_id=checkpoint_id,
+                checkpoint_name=checkpoint_name,
+                doc_type=requested_doc_type,
+                quality_res=quality_res
+            )
+
+        # 2. Document Classifier Gate (Verify supported document type: Passport or Visa)
+        class_res = self.document_classifier.classify_image(doc_image_path)
+        AuditService.record_event(
+            db, screening_id, "DOCUMENT_CLASSIFIED",
+            {
+                "verdict": class_res["verdict"],
+                "detected_type": class_res["detected_type"],
+                "confidence": class_res["confidence"]
+            }
+        )
+
+        if not class_res.get("is_supported", False):
+            return self._handle_unsupported_document(
+                db=db,
+                screening_id=screening_id,
+                start_time=start_time,
+                doc_image_path=doc_image_path,
+                live_image_path=live_image_path,
+                operator_id=operator_id,
+                checkpoint_id=checkpoint_id,
+                checkpoint_name=checkpoint_name,
+                class_res=class_res,
+                quality_res=quality_res
+            )
+
+        # Active verified document type
+        active_doc_type = class_res["verdict"]  # "PASSPORT" or "VISA"
+
+        # 3. Route to dedicated pipeline
+        if active_doc_type == "VISA":
+            return self._execute_visa_pipeline(
+                db=db,
+                screening_id=screening_id,
+                start_time=start_time,
+                doc_image_path=doc_image_path,
+                live_image_path=live_image_path,
+                operator_id=operator_id,
+                checkpoint_id=checkpoint_id,
+                checkpoint_name=checkpoint_name,
+                quality_res=quality_res
+            )
+        else:
+            return self._execute_passport_pipeline(
+                db=db,
+                screening_id=screening_id,
+                start_time=start_time,
+                doc_image_path=doc_image_path,
+                live_image_path=live_image_path,
+                operator_id=operator_id,
+                checkpoint_id=checkpoint_id,
+                checkpoint_name=checkpoint_name,
+                quality_res=quality_res
+            )
+
+    def _execute_passport_pipeline(
+        self,
+        db: Session,
+        screening_id: str,
+        start_time: float,
+        doc_image_path: str,
+        live_image_path: Optional[str],
+        operator_id: Optional[int],
+        checkpoint_id: Optional[str],
+        checkpoint_name: Optional[str],
+        quality_res: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Dedicated Passport Pipeline: OCR -> TD3 MRZ -> 7-3-1 -> VIZ Cross-Check -> Forensics -> Biometrics -> FAISS."""
+        # 1. OCR Extraction
         ocr_res = self.ocr_engine.process_image(doc_image_path)
+        actual_engine = ocr_res.get("engine")
         extracted_fields_dict = ocr_res.get("extracted_fields", {})
         AuditService.record_event(
             db, screening_id, "OCR_EXTRACTION_COMPLETED",
-            {"total_lines": ocr_res.get("total_lines_detected"), "engine": ocr_res.get("engine")}
+            {"total_lines": ocr_res.get("total_lines_detected"), "ocr_engine": actual_engine}
         )
 
-        # 3. MRZ Extraction & Check Digits
-        # Find MRZ candidate lines from OCR or attempt image bottom detection
+        # 2. MRZ Extraction & 7-3-1 Check Digits
         mrz_candidates = ocr_res.get("mrz_candidate_lines", [])
         mrz_res: Dict[str, Any] = {"parsed": False}
 
         if len(mrz_candidates) >= 2:
             mrz_res = MRZParser.parse_td3(mrz_candidates[-2], mrz_candidates[-1])
         else:
-            # Fallback: scan all lines for TD3 patterns
             raw_lines = [r["text"] for r in ocr_res.get("raw_lines", [])]
             for i in range(len(raw_lines) - 1):
                 t1 = raw_lines[i].replace(" ", "").upper()
@@ -198,7 +286,7 @@ class ScreeningOrchestrator:
             {"parsed": mrz_res.get("parsed", False), "all_checks_passed": mrz_res.get("all_checks_passed", False)}
         )
 
-        # 4. VIZ vs MRZ Cross-Check Findings
+        # 3. VIZ vs MRZ Cross-Check Findings
         viz_mrz_findings = MRZParser.cross_validate_viz(mrz_res, {
             "document_number": extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else None,
             "date_of_birth": extracted_fields_dict.get("date_of_birth", {}).get("value") if extracted_fields_dict.get("date_of_birth") else None,
@@ -206,10 +294,8 @@ class ScreeningOrchestrator:
             "full_name": extracted_fields_dict.get("full_name", {}).get("value") if extracted_fields_dict.get("full_name") else None
         })
 
-        # 5. Document Rules Engine (Expiry, DOB Plausibility, Watchlist)
+        # 4. Document Rules Engine (Expiry & Watchlist)
         rule_findings: List[Dict[str, Any]] = []
-
-        # Document Expiry Check
         exp_date_str = None
         if mrz_res.get("date_of_expiry"):
             exp_date_str = mrz_res["date_of_expiry"]
@@ -233,7 +319,6 @@ class ScreeningOrchestrator:
             except Exception:
                 pass
 
-        # Watchlist Check
         doc_num_to_check = (
             (mrz_res.get("document_number") if mrz_res.get("parsed") else None) or
             (extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else None)
@@ -257,14 +342,14 @@ class ScreeningOrchestrator:
             {"viz_findings_count": len(viz_mrz_findings), "rule_findings_count": len(rule_findings)}
         )
 
-        # 6. Multi-Signal Tampering Forensics
+        # 5. Multi-Signal Tampering Forensics
         tamper_res = self.tamper_pipeline.analyze(doc_image_path, output_dir=settings.HEATMAP_DIR)
         AuditService.record_event(
             db, screening_id, "TAMPER_FORENSICS_COMPLETED",
             {"score": tamper_res.get("composite_tamper_score"), "findings": tamper_res.get("findings_count")}
         )
 
-        # 7. Face Verification
+        # 6. Face Verification
         face_res = None
         if live_image_path and os.path.exists(live_image_path):
             face_res = self.face_verifier.verify(doc_image_path, live_image_path)
@@ -277,24 +362,24 @@ class ScreeningOrchestrator:
                 }
             )
 
-        # 8. Duplicate / Multi-Identity Search
+        # 7. Duplicate / Multi-Identity Search
         dup_res = None
         if face_res and face_res.get("doc_face_box") and face_res.get("verification_result") != "UNABLE_TO_VERIFY":
-            # Extract live face embedding
             live_img = cv2.imread(live_image_path)
-            live_cropped, _, _ = self.face_verifier.detect_and_crop_face(live_img)
-            if live_cropped is not None:
-                live_emb = self.face_verifier.extract_embedding(live_cropped)
-                dup_res = self.identity_indexer.search_duplicate(
-                    query_embedding=live_emb,
-                    current_doc_id=doc_num_to_check
-                )
-                AuditService.record_event(
-                    db, screening_id, "IDENTITY_SEARCH_COMPLETED",
-                    {"duplicate_detected": dup_res.get("duplicate_detected")}
-                )
+            if live_img is not None:
+                live_cropped, _, _ = self.face_verifier.detect_and_crop_face(live_img)
+                if live_cropped is not None:
+                    live_emb = self.face_verifier.extract_embedding(live_cropped)
+                    dup_res = self.identity_indexer.search_duplicate(
+                        query_embedding=live_emb,
+                        current_doc_id=doc_num_to_check
+                    )
+                    AuditService.record_event(
+                        db, screening_id, "IDENTITY_SEARCH_COMPLETED",
+                        {"duplicate_detected": dup_res.get("duplicate_detected")}
+                    )
 
-        # 9. Explainable Risk Fusion
+        # 8. Explainable Risk Fusion
         risk_res = self.risk_engine.compute_risk(
             quality_res=quality_res,
             mrz_res=mrz_res,
@@ -302,24 +387,20 @@ class ScreeningOrchestrator:
             rule_findings=rule_findings,
             tamper_res=tamper_res,
             face_res=face_res,
-            duplicate_res=dup_res
+            duplicate_res=dup_res,
+            doc_type="PASSPORT"
         )
-
         AuditService.record_event(
             db, screening_id, "RISK_SCORE_GENERATED",
             {"score": risk_res["risk_score"], "band": risk_res["risk_band"]}
         )
 
-        # 10. Persist to Database
+        # 9. Determine Terminal Status & Persist
         latency_ms = round((time.time() - start_time) * 1000.0, 1)
-        raw_doc_id = (
-            doc_num_to_check or
-            (extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else "UNKNOWN")
-        )
+        raw_doc_id = doc_num_to_check or "UNKNOWN"
         masked_id = mask_document_number(raw_doc_id)
 
-        # Determine terminal status
-        if quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"] or not quality_res.get("is_acceptable", True):
+        if quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"]:
             terminal_status = "UNABLE_TO_VERIFY"
             terminal_rec = "Unable to verify — image quality is insufficient. Please capture a clearer document."
         elif risk_res["risk_band"] == "LOW":
@@ -334,7 +415,7 @@ class ScreeningOrchestrator:
             operator_id=operator_id,
             checkpoint_id=checkpoint_id,
             checkpoint_name=checkpoint_name,
-            document_type=doc_type,
+            document_type="PASSPORT",
             masked_document_id=masked_id,
             status=terminal_status,
             risk_score=risk_res["risk_score"],
@@ -343,6 +424,7 @@ class ScreeningOrchestrator:
             doc_image_path=doc_image_path,
             live_image_path=live_image_path,
             ela_heatmap_path=tamper_res.get("heatmap_path"),
+            ocr_engine=actual_engine,
             execution_latency_ms=latency_ms
         )
         db.add(screening_rec)
@@ -353,34 +435,35 @@ class ScreeningOrchestrator:
             if val_dict:
                 v_val = val_dict.get("value")
                 m_val = mrz_res.get(fname) if mrz_res.get("parsed") else None
-                # Check status
                 status_val = "MATCH"
                 if m_val and v_val and str(v_val).upper() != str(m_val).upper():
                     status_val = "MISMATCH"
 
                 bbox = val_dict.get("bounding_box")
-                bbox_json = json.dumps(bbox) if bbox else None
-
                 f_rec = ExtractedField(
                     screening_id=screening_id,
                     field_name=fname,
                     visual_value=str(v_val) if v_val is not None else None,
                     mrz_value=str(m_val) if m_val is not None else None,
-                    confidence=val_dict.get("confidence", 1.0),
+                    confidence=val_dict.get("confidence", 1.0) or 1.0,
+                    ocr_engine=actual_engine,
+                    validation="VALID" if status_val == "MATCH" else "INVALID",
                     match_status=status_val,
-                    bounding_box_json=bbox_json
+                    bounding_box_json=json.dumps(bbox) if bbox else None
                 )
                 db.add(f_rec)
                 field_records.append({
                     "field_name": fname,
                     "visual_value": str(v_val) if v_val is not None else None,
                     "mrz_value": str(m_val) if m_val is not None else None,
-                    "confidence": val_dict.get("confidence", 1.0),
+                    "confidence": val_dict.get("confidence", 1.0) or 1.0,
+                    "ocr_engine": actual_engine,
+                    "validation": f_rec.validation,
                     "match_status": status_val,
                     "bounding_box": bbox
                 })
 
-        # Save Validation Findings
+        # Save Findings
         all_val_findings = viz_mrz_findings + rule_findings
         val_records = []
         for vf in all_val_findings:
@@ -401,7 +484,6 @@ class ScreeningOrchestrator:
             vf_dict["category"] = cat
             val_records.append(vf_dict)
 
-        # Save Tamper Findings
         tamper_records = []
         for tf in tamper_res.get("findings", []):
             tf_rec = TamperFinding(
@@ -416,7 +498,6 @@ class ScreeningOrchestrator:
             db.add(tf_rec)
             tamper_records.append(tf)
 
-        # Save Face Result
         face_record = None
         if face_res and face_res.get("verification_result") != "UNABLE_TO_VERIFY":
             fr_rec = FaceResult(
@@ -431,16 +512,15 @@ class ScreeningOrchestrator:
             )
             db.add(fr_rec)
             face_record = {
-                "metric": face_res.get("metric", "Cosine Similarity"),
-                "similarity_score": face_res.get("similarity_score", 0.0),
-                "threshold": face_res.get("threshold", 0.65),
-                "verification_result": face_res.get("verification_result", "MATCH"),
-                "appearance_level": face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL"),
+                "metric": fr_rec.metric,
+                "similarity_score": fr_rec.similarity_score,
+                "threshold": fr_rec.threshold,
+                "verification_result": fr_rec.verification_result,
+                "appearance_level": fr_rec.appearance_level,
                 "observations": face_res.get("appearance_analysis", {}).get("observations", []),
-                "recommendation": face_res.get("recommendation", "")
+                "recommendation": fr_rec.recommendation
             }
 
-        # Save Identity Matches
         identity_records = []
         if dup_res and dup_res.get("matches"):
             for m in dup_res["matches"]:
@@ -462,7 +542,20 @@ class ScreeningOrchestrator:
 
         db.commit()
 
-        # Fetch Audit Trail
+        # 8. Blockchain Anchor (Hyperledger Fabric)
+        blockchain_anchor_data = None
+        try:
+            blockchain_anchor_data = FabricAnchorService.create_anchor(
+                db=db,
+                screening_id=screening_id,
+                doc_path=doc_image_path,
+                risk_band=risk_res["risk_band"],
+                checkpoint_id=checkpoint_id or "CP-DEL-AIR",
+                actor=f"OFFICER_{operator_id}" if operator_id else "SYSTEM_AUTOMATION"
+            )
+        except Exception as bc_err:
+            logger.warning(f"[Blockchain Anchor] Anchoring attempt for {screening_id}: {bc_err}")
+
         audit_events = (
             db.query(AuditEvent)
             .filter(AuditEvent.screening_id == screening_id)
@@ -472,15 +565,17 @@ class ScreeningOrchestrator:
 
         return {
             "id": screening_id,
+            "screening_id": screening_id,
             "created_at": datetime.now(timezone.utc),
             "checkpoint_id": checkpoint_id,
             "checkpoint_name": checkpoint_name,
-            "document_type": doc_type,
+            "document_type": "PASSPORT",
             "masked_document_id": masked_id,
             "status": screening_rec.status,
             "risk_score": risk_res["risk_score"],
             "risk_band": risk_res["risk_band"],
-            "recommendation": risk_res["recommendation"],
+            "recommendation": screening_rec.recommendation,
+            "ocr_engine": actual_engine,
             "execution_latency_ms": latency_ms,
             "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
             "live_image_url": f"/api/v1/screenings/media/{screening_id}/live" if live_image_path else None,
@@ -495,6 +590,472 @@ class ScreeningOrchestrator:
             "identity_matches": identity_records,
             "risk_reasons": risk_res["reasons"],
             "signal_breakdown": risk_res["signal_breakdown"],
+            "blockchain_anchor": blockchain_anchor_data,
+            "audit_trail": [
+                {
+                    "id": a.id,
+                    "timestamp": a.timestamp,
+                    "actor": a.actor,
+                    "event_type": a.event_type,
+                    "payload_hash": a.payload_hash,
+                    "previous_hash": a.previous_hash,
+                    "event_hash": a.event_hash
+                }
+                for a in audit_events
+            ]
+        }
+
+    def _execute_visa_pipeline(
+        self,
+        db: Session,
+        screening_id: str,
+        start_time: float,
+        doc_image_path: str,
+        live_image_path: Optional[str],
+        operator_id: Optional[int],
+        checkpoint_id: Optional[str],
+        checkpoint_name: Optional[str],
+        quality_res: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Dedicated Visa Pipeline: OCR -> Visa Field Extraction -> Visa Rule Validation -> Forensics -> Optional Biometrics."""
+        # 1. OCR Extraction
+        ocr_res = self.ocr_engine.process_image(doc_image_path)
+        actual_engine = ocr_res.get("engine")
+        raw_lines = ocr_res.get("raw_lines", [])
+        AuditService.record_event(
+            db, screening_id, "OCR_EXTRACTION_COMPLETED",
+            {"total_lines": ocr_res.get("total_lines_detected"), "ocr_engine": actual_engine}
+        )
+
+        # 2. Dedicated Visa Field Extraction
+        visa_fields = VisaParser.parse_visa_fields(raw_lines, ocr_engine_name=actual_engine or "Tesseract")
+        AuditService.record_event(
+            db, screening_id, "VISA_FIELDS_EXTRACTED",
+            {"visa_number": visa_fields.get("visa_number", {}).get("value"), "visa_type": visa_fields.get("visa_type", {}).get("value")}
+        )
+
+        # 3. Visa Rule Validation
+        visa_findings = VisaParser.validate_visa_rules(visa_fields)
+
+        # Check watchlist on visa number or linked passport
+        v_num = visa_fields.get("visa_number", {}).get("value")
+        v_ppt = visa_fields.get("passport_number", {}).get("value")
+        doc_num_to_check = v_num or v_ppt
+        if doc_num_to_check:
+            clean_num = doc_num_to_check.replace(" ", "").upper()
+            w_entry = db.query(ReferenceWatchlist).filter(ReferenceWatchlist.document_id == clean_num).first()
+            if w_entry:
+                visa_findings.append({
+                    "rule_id": "WATCHLIST_MATCH",
+                    "category": "WATCHLIST",
+                    "severity": "CRITICAL",
+                    "field": "document_number",
+                    "expected": "CLEAR",
+                    "observed": f"FLAGGED ({w_entry.risk_category})",
+                    "message": f"Visa/Passport reference matched watchlist: {w_entry.reason} (Subject: {w_entry.full_name})",
+                    "classification": "PROTOTYPE_RULE"
+                })
+
+        AuditService.record_event(
+            db, screening_id, "VISA_RULES_VALIDATED",
+            {"findings_count": len(visa_findings)}
+        )
+
+        # 4. Tamper Forensics
+        tamper_res = self.tamper_pipeline.analyze(doc_image_path, output_dir=settings.HEATMAP_DIR)
+        AuditService.record_event(
+            db, screening_id, "TAMPER_FORENSICS_COMPLETED",
+            {"score": tamper_res.get("composite_tamper_score"), "findings": tamper_res.get("findings_count")}
+        )
+
+        # 5. Face Verification (if portrait detected on visa vignette)
+        face_res = None
+        if live_image_path and os.path.exists(live_image_path):
+            face_res = self.face_verifier.verify(doc_image_path, live_image_path)
+            AuditService.record_event(
+                db, screening_id, "FACE_VERIFICATION_COMPLETED",
+                {
+                    "result": face_res.get("verification_result"),
+                    "similarity": face_res.get("similarity_score")
+                }
+            )
+
+        # 6. Risk Fusion calibrated for Visa
+        risk_res = self.risk_engine.compute_risk(
+            quality_res=quality_res,
+            mrz_res={"parsed": False},
+            viz_mrz_findings=[],
+            rule_findings=visa_findings,
+            tamper_res=tamper_res,
+            face_res=face_res,
+            duplicate_res=None,
+            doc_type="VISA"
+        )
+        AuditService.record_event(
+            db, screening_id, "RISK_SCORE_GENERATED",
+            {"score": risk_res["risk_score"], "band": risk_res["risk_band"]}
+        )
+
+        # 7. Persist to Database
+        latency_ms = round((time.time() - start_time) * 1000.0, 1)
+        raw_doc_id = doc_num_to_check or "VISA-UNKNOWN"
+        masked_id = mask_document_number(raw_doc_id)
+
+        if quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"]:
+            terminal_status = "UNABLE_TO_VERIFY"
+            terminal_rec = "Unable to verify — image quality is insufficient. Please capture a clearer visa document."
+        elif risk_res["risk_band"] == "LOW":
+            terminal_status = "COMPLETED"
+            terminal_rec = risk_res["recommendation"]
+        else:
+            terminal_status = "MANUAL_REVIEW_REQUIRED"
+            terminal_rec = risk_res["recommendation"]
+
+        screening_rec = Screening(
+            id=screening_id,
+            operator_id=operator_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_name=checkpoint_name,
+            document_type="VISA",
+            masked_document_id=masked_id,
+            status=terminal_status,
+            risk_score=risk_res["risk_score"],
+            risk_band=risk_res["risk_band"],
+            recommendation=terminal_rec,
+            doc_image_path=doc_image_path,
+            live_image_path=live_image_path,
+            ela_heatmap_path=tamper_res.get("heatmap_path"),
+            ocr_engine=actual_engine,
+            execution_latency_ms=latency_ms
+        )
+        db.add(screening_rec)
+
+        # Save Extracted Fields
+        field_records = []
+        for fname, val_dict in visa_fields.items():
+            v_val = val_dict.get("value")
+            bbox = val_dict.get("bounding_box")
+            st_val = val_dict.get("status", "NOT_FOUND")
+            f_rec = ExtractedField(
+                screening_id=screening_id,
+                field_name=fname,
+                visual_value=str(v_val) if v_val is not None else None,
+                mrz_value=None,
+                confidence=val_dict.get("confidence") or 1.0,
+                ocr_engine=actual_engine,
+                validation=val_dict.get("validation", "VALID"),
+                match_status="MATCH" if st_val in ["FOUND", "LOW_CONFIDENCE"] else "NOT_PRESENT",
+                bounding_box_json=json.dumps(bbox) if bbox else None
+            )
+            db.add(f_rec)
+            field_records.append({
+                "field_name": fname,
+                "visual_value": str(v_val) if v_val is not None else None,
+                "mrz_value": None,
+                "confidence": val_dict.get("confidence") or 1.0,
+                "ocr_engine": actual_engine,
+                "validation": f_rec.validation,
+                "match_status": f_rec.match_status,
+                "bounding_box": bbox
+            })
+
+        # Save Validation Findings
+        val_records = []
+        for vf in visa_findings:
+            cat = vf.get("category", "VISA_COMPLIANCE")
+            vf_rec = ValidationFinding(
+                screening_id=screening_id,
+                rule_id=vf["rule_id"],
+                category=cat,
+                severity=vf.get("severity", "MEDIUM"),
+                field=vf.get("field"),
+                expected=str(vf.get("expected")),
+                observed=str(vf.get("observed")),
+                message=vf.get("message", ""),
+                classification=vf.get("classification", "OFFICIAL_STANDARD")
+            )
+            db.add(vf_rec)
+            vf_dict = dict(vf)
+            vf_dict["category"] = cat
+            val_records.append(vf_dict)
+
+        tamper_records = []
+        for tf in tamper_res.get("findings", []):
+            tf_rec = TamperFinding(
+                screening_id=screening_id,
+                technique=tf.get("technique", "FORENSIC"),
+                severity=tf.get("severity", "MEDIUM"),
+                score=tf.get("score", 0.0),
+                summary=tf.get("summary", ""),
+                observation=tf.get("observation", ""),
+                interpretation=tf.get("interpretation", "")
+            )
+            db.add(tf_rec)
+            tamper_records.append(tf)
+
+        face_record = None
+        if face_res and face_res.get("verification_result") != "UNABLE_TO_VERIFY":
+            fr_rec = FaceResult(
+                screening_id=screening_id,
+                metric=face_res.get("metric", "Cosine Similarity"),
+                similarity_score=face_res.get("similarity_score", 0.0),
+                threshold=face_res.get("threshold", 0.65),
+                verification_result=face_res.get("verification_result", "MATCH"),
+                appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL"),
+                observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])),
+                recommendation=face_res.get("recommendation", "")
+            )
+            db.add(fr_rec)
+            face_record = {
+                "metric": fr_rec.metric,
+                "similarity_score": fr_rec.similarity_score,
+                "threshold": fr_rec.threshold,
+                "verification_result": fr_rec.verification_result,
+                "appearance_level": fr_rec.appearance_level,
+                "observations": face_res.get("appearance_analysis", {}).get("observations", []),
+                "recommendation": fr_rec.recommendation
+            }
+
+        db.commit()
+
+        # 8. Blockchain Anchor (Hyperledger Fabric)
+        blockchain_anchor_data = None
+        try:
+            blockchain_anchor_data = FabricAnchorService.create_anchor(
+                db=db,
+                screening_id=screening_id,
+                doc_path=doc_image_path,
+                risk_band=risk_res["risk_band"],
+                checkpoint_id=checkpoint_id or "CP-DEL-AIR",
+                actor=f"OFFICER_{operator_id}" if operator_id else "SYSTEM_AUTOMATION"
+            )
+        except Exception as bc_err:
+            logger.warning(f"[Blockchain Anchor] Anchoring attempt for {screening_id}: {bc_err}")
+
+        audit_events = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.screening_id == screening_id)
+            .order_by(AuditEvent.id.asc())
+            .all()
+        )
+
+        return {
+            "id": screening_id,
+            "screening_id": screening_id,
+            "created_at": datetime.now(timezone.utc),
+            "checkpoint_id": checkpoint_id,
+            "checkpoint_name": checkpoint_name,
+            "document_type": "VISA",
+            "masked_document_id": masked_id,
+            "status": screening_rec.status,
+            "risk_score": risk_res["risk_score"],
+            "risk_band": risk_res["risk_band"],
+            "recommendation": screening_rec.recommendation,
+            "ocr_engine": actual_engine,
+            "execution_latency_ms": latency_ms,
+            "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
+            "live_image_url": f"/api/v1/screenings/media/{screening_id}/live" if live_image_path else None,
+            "ela_heatmap_url": f"/api/v1/screenings/media/{screening_id}/heatmap" if tamper_res.get("heatmap_path") else None,
+            "quality_assessment": quality_res,
+            "extracted_fields": field_records,
+            "mrz_data": None,
+            "validation_findings": val_records,
+            "tamper_findings": tamper_records,
+            "tamper_summary": tamper_res,
+            "face_result": face_record,
+            "identity_matches": [],
+            "risk_reasons": risk_res["reasons"],
+            "signal_breakdown": risk_res["signal_breakdown"],
+            "blockchain_anchor": blockchain_anchor_data,
+            "audit_trail": [
+                {
+                    "id": a.id,
+                    "timestamp": a.timestamp,
+                    "actor": a.actor,
+                    "event_type": a.event_type,
+                    "payload_hash": a.payload_hash,
+                    "previous_hash": a.previous_hash,
+                    "event_hash": a.event_hash
+                }
+                for a in audit_events
+            ]
+        }
+
+    def _handle_quality_rejection(
+        self,
+        db: Session,
+        screening_id: str,
+        start_time: float,
+        doc_image_path: str,
+        live_image_path: Optional[str],
+        operator_id: Optional[int],
+        checkpoint_id: Optional[str],
+        checkpoint_name: Optional[str],
+        doc_type: str,
+        quality_res: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Handles terminal QUALITY_REJECTED state cleanly."""
+        latency_ms = round((time.time() - start_time) * 1000.0, 1)
+        rec_msg = "Image quality is insufficient for reliable verification. Please upload a sharper, well-lit image of the Passport/Visa."
+
+        screening_rec = Screening(
+            id=screening_id,
+            operator_id=operator_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_name=checkpoint_name,
+            document_type=doc_type,
+            masked_document_id="UNREADABLE",
+            status="QUALITY_REJECTED",
+            risk_score=60.0,
+            risk_band="MEDIUM",
+            recommendation=rec_msg,
+            doc_image_path=doc_image_path,
+            live_image_path=live_image_path,
+            ocr_engine=None,
+            execution_latency_ms=latency_ms
+        )
+        db.add(screening_rec)
+        AuditService.record_event(
+            db, screening_id, "QUALITY_GATE_REJECTED",
+            {"score": quality_res.get("overall_score"), "reasons": quality_res.get("reasons")}
+        )
+        db.commit()
+
+        audit_events = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.screening_id == screening_id)
+            .order_by(AuditEvent.id.asc())
+            .all()
+        )
+
+        return {
+            "id": screening_id,
+            "screening_id": screening_id,
+            "created_at": datetime.now(timezone.utc),
+            "checkpoint_id": checkpoint_id,
+            "checkpoint_name": checkpoint_name,
+            "document_type": doc_type,
+            "masked_document_id": "UNREADABLE",
+            "status": "QUALITY_REJECTED",
+            "risk_score": 60.0,
+            "risk_band": "MEDIUM",
+            "recommendation": rec_msg,
+            "ocr_engine": None,
+            "execution_latency_ms": latency_ms,
+            "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
+            "live_image_url": None,
+            "ela_heatmap_url": None,
+            "quality_assessment": quality_res,
+            "extracted_fields": [],
+            "mrz_data": None,
+            "validation_findings": [],
+            "tamper_findings": [],
+            "tamper_summary": {"composite_tamper_score": 0.0, "findings_count": 0},
+            "face_result": None,
+            "identity_matches": [],
+            "risk_reasons": [{
+                "category": "QUALITY",
+                "severity": "HIGH",
+                "summary": "Quality Gate Failure",
+                "detail": "; ".join(quality_res.get("reasons", ["Blur or glare exceeds tolerance."])),
+                "action": "Request document re-capture."
+            }],
+            "signal_breakdown": {"quality_uncertainty": 60.0},
+            "audit_trail": [
+                {
+                    "id": a.id,
+                    "timestamp": a.timestamp,
+                    "actor": a.actor,
+                    "event_type": a.event_type,
+                    "payload_hash": a.payload_hash,
+                    "previous_hash": a.previous_hash,
+                    "event_hash": a.event_hash
+                }
+                for a in audit_events
+            ]
+        }
+
+    def _handle_unsupported_document(
+        self,
+        db: Session,
+        screening_id: str,
+        start_time: float,
+        doc_image_path: str,
+        live_image_path: Optional[str],
+        operator_id: Optional[int],
+        checkpoint_id: Optional[str],
+        checkpoint_name: Optional[str],
+        class_res: Dict[str, Any],
+        quality_res: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Handles terminal UNSUPPORTED_DOCUMENT state cleanly."""
+        latency_ms = round((time.time() - start_time) * 1000.0, 1)
+        det_type = class_res.get("detected_type", "UNSUPPORTED")
+        rec_msg = class_res.get("message", "Unsupported document type. SatyaScan currently supports Passport and Visa only.")
+
+        screening_rec = Screening(
+            id=screening_id,
+            operator_id=operator_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_name=checkpoint_name,
+            document_type=det_type,
+            masked_document_id="REJECTED",
+            status="UNSUPPORTED_DOCUMENT",
+            risk_score=80.0,
+            risk_band="HIGH",
+            recommendation=rec_msg,
+            doc_image_path=doc_image_path,
+            live_image_path=live_image_path,
+            ocr_engine=None,
+            execution_latency_ms=latency_ms
+        )
+        db.add(screening_rec)
+        AuditService.record_event(
+            db, screening_id, "UNSUPPORTED_DOCUMENT_REJECTED",
+            {"detected_type": det_type, "indicators": class_res.get("indicators")}
+        )
+        db.commit()
+
+        audit_events = (
+            db.query(AuditEvent)
+            .filter(AuditEvent.screening_id == screening_id)
+            .order_by(AuditEvent.id.asc())
+            .all()
+        )
+
+        return {
+            "id": screening_id,
+            "screening_id": screening_id,
+            "created_at": datetime.now(timezone.utc),
+            "checkpoint_id": checkpoint_id,
+            "checkpoint_name": checkpoint_name,
+            "document_type": det_type,
+            "masked_document_id": "REJECTED",
+            "status": "UNSUPPORTED_DOCUMENT",
+            "risk_score": 80.0,
+            "risk_band": "HIGH",
+            "recommendation": rec_msg,
+            "ocr_engine": None,
+            "execution_latency_ms": latency_ms,
+            "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
+            "live_image_url": None,
+            "ela_heatmap_url": None,
+            "quality_assessment": quality_res,
+            "extracted_fields": [],
+            "mrz_data": None,
+            "validation_findings": [],
+            "tamper_findings": [],
+            "tamper_summary": {"composite_tamper_score": 0.0, "findings_count": 0},
+            "face_result": None,
+            "identity_matches": [],
+            "risk_reasons": [{
+                "category": "DOCUMENT_TYPE",
+                "severity": "CRITICAL",
+                "summary": f"Unsupported Document Type: {det_type}",
+                "detail": "; ".join(class_res.get("indicators", ["Document is not an accepted Passport or Visa."])),
+                "action": "Reject document from border pipeline."
+            }],
+            "signal_breakdown": {"document_type_mismatch": 80.0},
             "audit_trail": [
                 {
                     "id": a.id,
@@ -510,5 +1071,5 @@ class ScreeningOrchestrator:
         }
 
 
-# Singleton instance
+# Global singleton instance
 screening_orchestrator = ScreeningOrchestrator()

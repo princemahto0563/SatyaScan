@@ -12,10 +12,12 @@ import re
 
 from backend.app.models.database import (
     get_db, Screening, ExtractedField, ValidationFinding,
-    TamperFinding, FaceResult, AuditEvent, User
+    TamperFinding, FaceResult, AuditEvent, User, BlockchainAnchor
 )
 from backend.app.core.config import settings
 from backend.app.core.security import get_current_user, sanitize_filename
+from backend.app.core.permissions import check_checkpoint_access
+from backend.app.core.rate_limiter import rate_limit_reports
 from backend.app.services.report_generator import ReportGenerator
 from backend.app.services.audit_service import AuditService
 
@@ -31,8 +33,8 @@ def validate_screening_id(screening_id: str) -> str:
     return clean_id
 
 
-@router.get("/{screening_id}/pdf")
-@router.get("/{screening_id}/download")
+@router.get("/{screening_id}/pdf", dependencies=[Depends(rate_limit_reports)])
+@router.get("/{screening_id}/download", dependencies=[Depends(rate_limit_reports)])
 def download_screening_pdf(
     screening_id: str,
     current_user: User = Depends(get_current_user),
@@ -40,23 +42,41 @@ def download_screening_pdf(
 ):
     """
     Generates and downloads official ReportLab forensic screening PDF report.
-    Requires authenticated officer session.
+    Requires authenticated officer session and checkpoint access authorization.
+    Rate-limited against CPU resource exhaustion.
     """
     clean_id = validate_screening_id(screening_id)
     screening = db.query(Screening).filter(Screening.id == clean_id).first()
     if not screening:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screening record not found")
 
+    # Enforce checkpoint isolation policy
+    check_checkpoint_access(current_user, screening, db, resource_type="pdf_report")
+
     fields = db.query(ExtractedField).filter(ExtractedField.screening_id == clean_id).all()
     val_findings = db.query(ValidationFinding).filter(ValidationFinding.screening_id == clean_id).all()
     tamper_findings = db.query(TamperFinding).filter(TamperFinding.screening_id == clean_id).all()
     face_res = db.query(FaceResult).filter(FaceResult.screening_id == clean_id).first()
     audit_events = db.query(AuditEvent).filter(AuditEvent.screening_id == clean_id).order_by(AuditEvent.id.asc()).all()
+    anchor = db.query(BlockchainAnchor).filter(BlockchainAnchor.screening_id == clean_id).first()
+    anchor_dict = None
+    if anchor:
+        anchor_dict = {
+            "document_hash": anchor.document_hash,
+            "result_hash": anchor.result_hash,
+            "transaction_id": anchor.transaction_id,
+            "network": anchor.network,
+            "channel": anchor.channel,
+            "chaincode": anchor.chaincode,
+            "status": anchor.status,
+            "verification_message": anchor.verification_message
+        }
 
     # Reconstruct data dictionary for ReportLab
     case_payload = {
         "id": screening.id,
         "created_at": str(screening.created_at),
+        "blockchain_anchor": anchor_dict,
         "checkpoint_id": screening.checkpoint_id,
         "checkpoint_name": screening.checkpoint_name,
         "operator_name": screening.operator.full_name if screening.operator else "Authorized Screening Officer",

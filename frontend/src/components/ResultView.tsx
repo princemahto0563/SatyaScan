@@ -7,8 +7,11 @@ import {
   FileSearch, History, Sliders, ChevronLeft, Info, HelpCircle,
   Clock, FileText, Check, AlertCircle, Fingerprint
 } from "lucide-react";
-import { ScreeningDetail } from "../lib/types";
-import { getReportDownloadUrl, verifyAuditChain, anchorAuditChain, BACKEND_ROOT_URL } from "../lib/api";
+import { ScreeningDetail, BlockchainAnchor, BlockchainVerificationResponse } from "../lib/types";
+import { 
+  getReportDownloadUrl, verifyAuditChain, anchorAuditChain,
+  anchorBlockchainScreening, verifyBlockchainAnchor, BACKEND_ROOT_URL 
+} from "../lib/api";
 
 interface ResultViewProps {
   caseData: ScreeningDetail;
@@ -20,8 +23,11 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
   const [forensicView, setForensicView] = useState<"original" | "ela_heatmap">("ela_heatmap");
   const [auditVerifyResult, setAuditVerifyResult] = useState<any>(null);
   const [isVerifyingAudit, setIsVerifyingAudit] = useState(false);
-  const [blockchainReceipt, setBlockchainReceipt] = useState<any>(null);
+  const [blockchainAnchor, setBlockchainAnchor] = useState<BlockchainAnchor | null>(caseData.blockchain_anchor || null);
+  const [blockchainVerifyResult, setBlockchainVerifyResult] = useState<BlockchainVerificationResponse | null>(null);
   const [isAnchoring, setIsAnchoring] = useState(false);
+  const [isVerifyingBlockchain, setIsVerifyingBlockchain] = useState(false);
+  const [blockchainError, setBlockchainError] = useState<string | null>(null);
 
   // Live Audit Chain Verification
   const handleVerifyChain = async () => {
@@ -36,16 +42,31 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
     }
   };
 
-  // Local Cryptographic Notarization Notary Receipt
+  // Permissioned Hyperledger Fabric Anchoring
   const handleAnchorBlockchain = async () => {
     setIsAnchoring(true);
+    setBlockchainError(null);
     try {
-      const res = await anchorAuditChain(caseData.id);
-      setBlockchainReceipt(res);
+      const res = await anchorBlockchainScreening(caseData.id);
+      setBlockchainAnchor(res);
     } catch (e: any) {
-      console.error(e);
+      setBlockchainError(e.message || "Failed to anchor to Hyperledger Fabric");
     } finally {
       setIsAnchoring(false);
+    }
+  };
+
+  // Permissioned Hyperledger Fabric Ledger Verification
+  const handleVerifyBlockchain = async () => {
+    setIsVerifyingBlockchain(true);
+    setBlockchainError(null);
+    try {
+      const res = await verifyBlockchainAnchor(caseData.id);
+      setBlockchainVerifyResult(res);
+    } catch (e: any) {
+      setBlockchainError(e.message || "Failed to verify against Hyperledger Fabric ledger");
+    } finally {
+      setIsVerifyingBlockchain(false);
     }
   };
 
@@ -249,25 +270,78 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
               </div>
             </div>
 
-            {auditVerifyResult.is_valid && !blockchainReceipt && (
+            {auditVerifyResult.is_valid && !blockchainAnchor && (
               <button
                 onClick={handleAnchorBlockchain}
                 disabled={isAnchoring}
                 className="rounded bg-teal-600/20 dark:bg-teal-600/30 px-3 py-1.5 text-xs font-semibold text-teal-800 dark:text-teal-300 border border-teal-500/40 hover:bg-teal-600/30 transition-colors"
-                title="Generate local SHA-256 Merkle root receipt for legal dossier anchoring"
+                title="Anchor SHA-256 evidence digests to Hyperledger Fabric permissioned ledger"
               >
-                {isAnchoring ? "Anchoring..." : "Notarize Record"}
+                {isAnchoring ? "Anchoring..." : "Anchor to Blockchain"}
               </button>
             )}
           </div>
 
-          {blockchainReceipt && (
-            <div className="mt-3 pt-3 border-t border-emerald-200 dark:border-emerald-500/20 text-[11px] font-mono space-y-1">
-              <div className="font-semibold text-emerald-800 dark:text-emerald-300">
-                ✓ Local Notarization Receipt: Merkle Root {blockchainReceipt.merkle_root?.slice(0, 24)}... (Simulated Block #{blockchainReceipt.block_number})
+          {blockchainError && (
+            <div className="mt-2 text-[11px] text-rose-600 dark:text-rose-400 font-mono">
+              Error: {blockchainError}
+            </div>
+          )}
+
+          {blockchainAnchor && (
+            <div className="mt-3 pt-3 border-t border-emerald-200 dark:border-emerald-500/20 text-[11px] font-mono space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center space-x-2">
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                    Blockchain Anchor:
+                  </span>
+                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    blockchainAnchor.status === "VERIFIED"
+                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                      : blockchainAnchor.status === "MISMATCH"
+                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
+                      : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  }`}>
+                    {blockchainAnchor.status}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                    ({blockchainAnchor.network} · {blockchainAnchor.channel})
+                  </span>
+                </div>
+
+                <button
+                  onClick={handleVerifyBlockchain}
+                  disabled={isVerifyingBlockchain}
+                  className="rounded bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 px-2 py-1 text-[10px] font-semibold text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-600 transition"
+                >
+                  {isVerifyingBlockchain ? "Verifying..." : "Verify Ledger Record"}
+                </button>
               </div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                Generated via Local Cryptographic Notarization Adapter. Self-contained local integrity record.
+
+              <div className="text-[10px] text-slate-600 dark:text-slate-400 break-all space-y-0.5">
+                <div><span>Document SHA-256: </span><span className="text-slate-800 dark:text-slate-200">{blockchainAnchor.document_hash}</span></div>
+                <div><span>Result SHA-256: </span><span className="text-slate-800 dark:text-slate-200">{blockchainAnchor.result_hash}</span></div>
+                {blockchainAnchor.transaction_id && (
+                  <div><span>Transaction ID: </span><span className="text-teal-700 dark:text-teal-400">{blockchainAnchor.transaction_id}</span></div>
+                )}
+              </div>
+
+              {blockchainVerifyResult && (
+                <div className={`mt-2 p-2 rounded text-[10px] border ${
+                  blockchainVerifyResult.is_verified
+                    ? "bg-emerald-100/50 dark:bg-emerald-950/30 border-emerald-300 text-emerald-800 dark:text-emerald-300"
+                    : blockchainVerifyResult.status === "UNAVAILABLE"
+                    ? "bg-amber-100/50 dark:bg-amber-950/30 border-amber-300 text-amber-800 dark:text-amber-300"
+                    : "bg-rose-100/50 dark:bg-rose-950/30 border-rose-300 text-rose-800 dark:text-rose-300"
+                }`}>
+                  <div className="font-bold">Ledger Verification: {blockchainVerifyResult.status}</div>
+                  <div className="mt-0.5">{blockchainVerifyResult.status_message}</div>
+                  <div className="mt-0.5 text-slate-500 dark:text-slate-400">{blockchainVerifyResult.privacy_compliance}</div>
+                </div>
+              )}
+
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 pt-0.5">
+                {blockchainAnchor.verification_message || "Off-chain evidence digests anchored to permissioned Hyperledger Fabric. Zero PII transmitted on-chain."}
               </div>
             </div>
           )}
@@ -1034,40 +1108,207 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
       {/* TAB 5: SHA-256 TAMPER-EVIDENT AUDIT TRAIL                */}
       {/* ======================================================== */}
       {activeTab === "audit" && (
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                SHA-256 Tamper-Evident Audit Trail
+        <div className="space-y-4">
+          {/* Institutional Cybersecurity Posture Card */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <ShieldCheck className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Security Posture & Platform Integrity Controls
+                </span>
+              </div>
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950 dark:text-teal-300 border border-teal-300 dark:border-teal-700">
+                SECURITY-HARDENED SIH PROTOTYPE
               </span>
-              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                The recorded screening events are cryptographically linked, allowing later modification of the recorded history to be detected.
-              </p>
             </div>
-            <span className="text-xs font-mono text-teal-700 dark:text-teal-400">
-              {caseData.audit_trail.length} Recorded Blocks
-            </span>
+
+            <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 text-xs">
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">Authentication</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> JWT (HS256)
+                </div>
+                <div className="text-[10px] text-slate-500">alg=none Rejected</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">Station Isolation</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> IDOR Defense
+                </div>
+                <div className="text-[10px] text-slate-500">Station-Scoped Access</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">Access Control</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Centralized RBAC
+                </div>
+                <div className="text-[10px] text-slate-500">Officer / Supervisor / Admin</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">File Ingestion</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Magic Bytes Check
+                </div>
+                <div className="text-[10px] text-slate-500">Polyglot & Bomb Shield</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">Rate Limiting</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Sliding Window
+                </div>
+                <div className="text-[10px] text-slate-500">DoS & Stuffing Defense</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">HTTP Headers</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Strict Defense
+                </div>
+                <div className="text-[10px] text-slate-500">nosniff · DENY · Whitelist CORS</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">Privacy & PII</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> Data Minimization
+                </div>
+                <div className="text-[10px] text-slate-500">Zero PII On Ledger</div>
+              </div>
+
+              <div className="bg-slate-50 dark:bg-slate-950/60 p-2.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                <div className="text-[10px] font-semibold text-slate-500 uppercase">Audit Immutability</div>
+                <div className="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span> SHA-256 + Fabric
+                </div>
+                <div className="text-[10px] text-slate-500">Cryptographic Chain</div>
+              </div>
+            </div>
           </div>
 
-          <div className="space-y-2 pt-2">
-            {caseData.audit_trail.map((ev, idx) => (
-              <div key={idx} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3 text-xs font-mono">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="font-bold text-teal-800 dark:text-teal-300">
-                    #{ev.id} · {ev.event_type}
-                  </span>
-                  <span className="text-slate-500">
-                    {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                  </span>
-                </div>
-                <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 break-all">
-                  <span>Prev: </span>{ev.previous_hash.slice(0, 32)}...
-                </div>
-                <div className="text-[10px] text-slate-700 dark:text-slate-300 break-all">
-                  <span>Hash: </span>{ev.event_hash}
+          {/* Hyperledger Fabric Permissioned Anchor Card */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <Lock className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Permissioned Blockchain Audit Anchor (Hyperledger Fabric)
+                </span>
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold ${
+                  blockchainAnchor?.status === "VERIFIED"
+                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+                    : blockchainAnchor?.status === "MISMATCH"
+                    ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700"
+                    : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
+                }`}>
+                  {blockchainAnchor?.status || "NOT ANCHORED"}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <div className="space-y-1 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800 font-mono text-[11px]">
+                <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider font-sans mb-1">Ledger Configuration</div>
+                <div><span className="text-slate-500">Network: </span><span className="font-semibold text-slate-800 dark:text-slate-200">{blockchainAnchor?.network || "Hyperledger Fabric (Private)"}</span></div>
+                <div><span className="text-slate-500">Channel: </span><span className="text-slate-800 dark:text-slate-200">{blockchainAnchor?.channel || "satyascan-channel"}</span></div>
+                <div><span className="text-slate-500">Chaincode: </span><span className="text-slate-800 dark:text-slate-200">{blockchainAnchor?.chaincode || "screening_anchor"}</span></div>
+                <div><span className="text-slate-500">Transaction ID: </span><span className="text-teal-700 dark:text-teal-400 break-all">{blockchainAnchor?.transaction_id || "None (Ledger offline)"}</span></div>
+              </div>
+
+              <div className="space-y-1 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-lg border border-slate-200 dark:border-slate-800 font-mono text-[11px]">
+                <div className="text-[10px] font-bold uppercase text-slate-500 tracking-wider font-sans mb-1">Cryptographic Anchors</div>
+                <div className="break-all"><span className="text-slate-500">Document Digest: </span><span className="text-slate-800 dark:text-slate-200">{blockchainAnchor?.document_hash || "N/A"}</span></div>
+                <div className="break-all"><span className="text-slate-500">Canonical Result Digest: </span><span className="text-slate-800 dark:text-slate-200">{blockchainAnchor?.result_hash || "N/A"}</span></div>
+                <div className="text-[10px] text-emerald-700 dark:text-emerald-400 pt-1 font-sans">
+                  ✓ Data Minimization: Zero PII, raw images, or biometric vectors stored on-chain.
                 </div>
               </div>
-            ))}
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                {blockchainAnchor?.verification_message || "Evidence stays off-chain; cryptographic proof goes on-chain."}
+              </span>
+
+              <div className="flex items-center space-x-2">
+                {!blockchainAnchor && (
+                  <button
+                    onClick={handleAnchorBlockchain}
+                    disabled={isAnchoring}
+                    className="rounded bg-teal-600 hover:bg-teal-700 px-3 py-1.5 text-xs font-semibold text-white transition shadow-sm"
+                  >
+                    {isAnchoring ? "Anchoring..." : "Anchor to Blockchain"}
+                  </button>
+                )}
+                {blockchainAnchor && (
+                  <button
+                    onClick={handleVerifyBlockchain}
+                    disabled={isVerifyingBlockchain}
+                    className="rounded bg-slate-800 dark:bg-slate-700 hover:bg-slate-900 dark:hover:bg-slate-600 px-3 py-1.5 text-xs font-semibold text-white transition shadow-sm"
+                  >
+                    {isVerifyingBlockchain ? "Verifying..." : "Verify Ledger Record"}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {blockchainVerifyResult && (
+              <div className={`mt-3 p-3 rounded-lg text-xs border ${
+                blockchainVerifyResult.is_verified
+                  ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 text-emerald-800 dark:text-emerald-300"
+                  : blockchainVerifyResult.status === "UNAVAILABLE"
+                  ? "bg-amber-50 dark:bg-amber-950/30 border-amber-300 text-amber-800 dark:text-amber-300"
+                  : "bg-rose-50 dark:bg-rose-950/30 border-rose-300 text-rose-800 dark:text-rose-300"
+              }`}>
+                <div className="font-bold">Ledger Verification Status: {blockchainVerifyResult.status}</div>
+                <div className="mt-1">{blockchainVerifyResult.status_message}</div>
+                <div className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Compliance: {blockchainVerifyResult.privacy_compliance}</div>
+              </div>
+            )}
+          </div>
+
+          {/* Local SHA-256 Audit Trail */}
+          <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Local SHA-256 Tamper-Evident Audit Trail
+                </span>
+                <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
+                  The recorded screening events are cryptographically linked, allowing later modification of the recorded history to be detected.
+                </p>
+              </div>
+              <span className="text-xs font-mono text-teal-700 dark:text-teal-400">
+                {caseData.audit_trail.length} Recorded Blocks
+              </span>
+            </div>
+
+            <div className="space-y-2 pt-2">
+              {caseData.audit_trail.map((ev, idx) => (
+                <div key={idx} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3 text-xs font-mono">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-bold text-teal-800 dark:text-teal-300">
+                      #{ev.id} · {ev.event_type}
+                    </span>
+                    <span className="text-slate-500">
+                      {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 break-all">
+                    <span>Prev: </span>{ev.previous_hash.slice(0, 32)}...
+                  </div>
+                  <div className="text-[10px] text-slate-700 dark:text-slate-300 break-all">
+                    <span>Hash: </span>{ev.event_hash}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

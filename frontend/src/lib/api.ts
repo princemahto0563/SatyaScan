@@ -5,7 +5,7 @@
  * Strict security: Zero token persistence in localStorage/sessionStorage (XSS protection).
  */
 
-import { ScreeningDetail, ScreeningSummary, CheckpointInfo, UserSession } from "./types";
+import { ScreeningDetail, ScreeningSummary, CheckpointInfo, UserSession, BlockchainAnchor, BlockchainVerificationResponse } from "./types";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 export const BACKEND_ROOT_URL = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
@@ -298,6 +298,36 @@ export async function anchorAuditChain(screeningId: string) {
   });
   if (!res.ok) {
     throw new Error("Blockchain anchor request failed");
+  }
+  return res.json();
+}
+
+export async function getBlockchainAnchor(screeningId: string): Promise<BlockchainAnchor> {
+  const res = await authenticatedFetch(`${API_BASE_URL}/blockchain/${screeningId}`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch blockchain anchor");
+  }
+  return res.json();
+}
+
+export async function anchorBlockchainScreening(screeningId: string): Promise<BlockchainAnchor> {
+  const res = await authenticatedFetch(`${API_BASE_URL}/blockchain/${screeningId}/anchor`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const msg = await extractErrorMessage(res);
+    throw new Error(msg || "Blockchain anchor request failed");
+  }
+  return res.json();
+}
+
+export async function verifyBlockchainAnchor(screeningId: string): Promise<BlockchainVerificationResponse> {
+  const res = await authenticatedFetch(`${API_BASE_URL}/blockchain/${screeningId}/verify`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const msg = await extractErrorMessage(res);
+    throw new Error(msg || "Blockchain verification request failed");
   }
   return res.json();
 }

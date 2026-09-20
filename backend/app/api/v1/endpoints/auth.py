@@ -38,6 +38,20 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     # Safe lookup: do not reveal whether username or password was incorrect
     user = db.query(User).filter(User.username == credentials.username.strip()).first()
     if not user or not verify_password(credentials.password, user.hashed_password):
+        try:
+            AuditService.record_event(
+                db=db,
+                screening_id=f"AUTH-{credentials.username.strip()[:32]}",
+                event_type="LOGIN_FAILURE",
+                payload_data={
+                    "attempted_username": credentials.username.strip()[:64],
+                    "checkpoint_id": credentials.checkpoint_id,
+                    "reason": "Invalid credentials",
+                },
+                actor="SYSTEM:AUTH_GATEWAY"
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password credentials.",
@@ -45,6 +59,19 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
         )
 
     if not user.is_active:
+        try:
+            AuditService.record_event(
+                db=db,
+                screening_id=f"AUTH-{user.username}",
+                event_type="LOGIN_FAILURE",
+                payload_data={
+                    "attempted_username": user.username,
+                    "reason": "User account deactivated",
+                },
+                actor="SYSTEM:AUTH_GATEWAY"
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account is deactivated.",
@@ -55,6 +82,20 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
     if credentials.checkpoint_id:
         cp = db.query(Checkpoint).filter(Checkpoint.id == credentials.checkpoint_id.strip()).first()
         if not cp or not cp.is_active:
+            try:
+                AuditService.record_event(
+                    db=db,
+                    screening_id=f"AUTH-{user.username}",
+                    event_type="LOGIN_FAILURE",
+                    payload_data={
+                        "attempted_username": user.username,
+                        "attempted_checkpoint": credentials.checkpoint_id,
+                        "reason": "Invalid checkpoint credentials",
+                    },
+                    actor="SYSTEM:AUTH_GATEWAY"
+                )
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid checkpoint credentials.",
@@ -62,6 +103,21 @@ def login(credentials: UserLogin, db: Session = Depends(get_db)):
             )
         # Strict Checkpoint-User Binding
         if user.checkpoint_id != cp.id and user.username != cp.username:
+            try:
+                AuditService.record_event(
+                    db=db,
+                    screening_id=f"AUTH-{user.username}",
+                    event_type="LOGIN_FAILURE",
+                    payload_data={
+                        "attempted_username": user.username,
+                        "user_checkpoint": user.checkpoint_id,
+                        "attempted_checkpoint": cp.id,
+                        "reason": "Checkpoint-user binding mismatch",
+                    },
+                    actor="SYSTEM:AUTH_GATEWAY"
+                )
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid checkpoint credentials.",

@@ -63,6 +63,7 @@ class Screening(Base):
     doc_image_path = Column(String(255), nullable=True)
     live_image_path = Column(String(255), nullable=True)
     ela_heatmap_path = Column(String(255), nullable=True)
+    ocr_engine = Column(String(50), nullable=True)  # "PaddleOCR" or "Tesseract"
     execution_latency_ms = Column(Float, default=0.0)
 
     operator = relationship("User", back_populates="screenings")
@@ -72,6 +73,7 @@ class Screening(Base):
     face_result = relationship("FaceResult", uselist=False, back_populates="screening", cascade="all, delete-orphan")
     identity_matches = relationship("IdentityMatch", back_populates="screening", cascade="all, delete-orphan")
     audit_events = relationship("AuditEvent", back_populates="screening", cascade="all, delete-orphan")
+    blockchain_anchor = relationship("BlockchainAnchor", uselist=False, back_populates="screening", cascade="all, delete-orphan")
 
 
 class ExtractedField(Base):
@@ -83,6 +85,8 @@ class ExtractedField(Base):
     visual_value = Column(String(100), nullable=True)
     mrz_value = Column(String(100), nullable=True)
     confidence = Column(Float, default=1.0)
+    ocr_engine = Column(String(50), nullable=True)  # "PaddleOCR" or "Tesseract"
+    validation = Column(String(30), default="VALID")  # VALID, INVALID, PENDING, LOW_CONFIDENCE, NOT_FOUND
     match_status = Column(String(20), default="MATCH")  # MATCH, MISMATCH, NOT_PRESENT
     bounding_box_json = Column(Text, nullable=True)
 
@@ -165,6 +169,27 @@ class AuditEvent(Base):
     screening = relationship("Screening", back_populates="audit_events")
 
 
+class BlockchainAnchor(Base):
+    __tablename__ = "blockchain_anchors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    screening_id = Column(String(50), ForeignKey("screenings.id"), unique=True, index=True, nullable=False)
+    document_hash = Column(String(64), nullable=False)
+    result_hash = Column(String(64), nullable=False)
+    transaction_id = Column(String(128), nullable=True)
+    ledger_asset_id = Column(String(128), nullable=True)
+    anchor_timestamp = Column(DateTime, nullable=True)
+    network = Column(String(64), default="Hyperledger Fabric (Private)")
+    channel = Column(String(64), default="satyascan-channel")
+    chaincode = Column(String(64), default="screening_anchor")
+    status = Column(String(32), default="PENDING")  # PENDING, VERIFIED, UNAVAILABLE, FAILED
+    verification_timestamp = Column(DateTime, nullable=True)
+    verification_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+
+    screening = relationship("Screening", back_populates="blockchain_anchor")
+
+
 class ReferenceWatchlist(Base):
     __tablename__ = "reference_watchlist"
 
@@ -215,6 +240,16 @@ def init_db():
                     conn.execute(text("ALTER TABLE screenings ADD COLUMN checkpoint_id VARCHAR(50)"))
                 if "checkpoint_name" not in sc_cols:
                     conn.execute(text("ALTER TABLE screenings ADD COLUMN checkpoint_name VARCHAR(100)"))
+                if "ocr_engine" not in sc_cols:
+                    conn.execute(text("ALTER TABLE screenings ADD COLUMN ocr_engine VARCHAR(50)"))
+
+                # Migrate extracted_fields table columns if missing
+                res_ef = conn.execute(text("PRAGMA table_info(extracted_fields)")).fetchall()
+                ef_cols = {row[1] for row in res_ef}
+                if "ocr_engine" not in ef_cols:
+                    conn.execute(text("ALTER TABLE extracted_fields ADD COLUMN ocr_engine VARCHAR(50)"))
+                if "validation" not in ef_cols:
+                    conn.execute(text("ALTER TABLE extracted_fields ADD COLUMN validation VARCHAR(30) DEFAULT 'VALID'"))
                 conn.commit()
             except Exception:
                 pass
