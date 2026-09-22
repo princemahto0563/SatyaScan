@@ -6,7 +6,12 @@ to detect individuals operating under multiple distinct travel identities.
 """
 
 from typing import Dict, Any, List, Optional
-import faiss
+try:
+    import faiss
+    FAISS_AVAILABLE = True
+except Exception:
+    faiss = None
+    FAISS_AVAILABLE = False
 import numpy as np
 import json
 import os
@@ -14,7 +19,9 @@ import os
 
 class MultiIdentityIndexer:
     """
-    FAISS-powered vector search engine for detecting duplicate identity reuse.
+    Vector search engine for detecting duplicate identity reuse.
+    Utilizes FAISS IndexFlatIP when available, with a mathematically equivalent
+    pure-NumPy cosine dot-product fallback for containerized/minimal environments.
     Maintains synthetic identity vectors and cross-matches incoming screenings.
     """
 
@@ -22,10 +29,20 @@ class MultiIdentityIndexer:
 
     def __init__(self, embedding_dim: int = 512):
         self.embedding_dim = embedding_dim
-        self.version = "FAISS-IndexFlatIP-v1.0"
-        # IndexFlatIP calculates inner product, exactly equal to Cosine Similarity for L2-normalized vectors
-        self.index = faiss.IndexFlatIP(self.embedding_dim)
+        if FAISS_AVAILABLE and faiss is not None:
+            self.version = "FAISS-IndexFlatIP-v1.0"
+            self.index = faiss.IndexFlatIP(self.embedding_dim)
+        else:
+            self.version = "NumPy-VectorSearch-v1.0"
+            self.index = None
+            self._embeddings_list: List[np.ndarray] = []
         self.metadata_store: List[Dict[str, Any]] = []
+
+    @property
+    def total_records(self) -> int:
+        if self.index is not None:
+            return self.index.ntotal
+        return len(getattr(self, "_embeddings_list", []))
 
     def add_identity(
         self,
@@ -44,8 +61,13 @@ class MultiIdentityIndexer:
         if norm > 1e-6:
             emb = emb / norm
 
-        idx = self.index.ntotal
-        self.index.add(emb)
+        if self.index is not None:
+            idx = self.index.ntotal
+            self.index.add(emb)
+        else:
+            idx = len(self._embeddings_list)
+            self._embeddings_list.append(emb[0])
+
         self.metadata_store.append({
             "index_id": idx,
             "document_id": doc_id,
@@ -66,7 +88,8 @@ class MultiIdentityIndexer:
         Searches index for nearest biometric neighbors.
         Flags potential duplicate identity if high similarity is found for a DIFFERENT document/name.
         """
-        if self.index.ntotal == 0:
+        total = self.total_records
+        if total == 0:
             return {
                 "duplicate_detected": False,
                 "matches": [],
@@ -79,14 +102,25 @@ class MultiIdentityIndexer:
         if norm > 1e-6:
             q = q / norm
 
-        k = min(top_k, self.index.ntotal)
-        distances, indices = self.index.search(q, k)
+        k = min(top_k, total)
+
+        if self.index is not None:
+            distances, indices = self.index.search(q, k)
+            dist_list = distances[0]
+            idx_list = indices[0]
+        else:
+            # Pure NumPy cosine dot-product (exact equivalent of IndexFlatIP for L2-normalized vectors)
+            matrix = np.array(self._embeddings_list, dtype=np.float32)  # shape (N, 512)
+            scores = np.dot(matrix, q.T).flatten()                      # shape (N,)
+            top_k_indices = np.argsort(-scores)[:k]
+            idx_list = top_k_indices
+            dist_list = scores[top_k_indices]
 
         matches: List[Dict[str, Any]] = []
         duplicate_flag = False
         primary_alert = None
 
-        for dist, idx in zip(distances[0], indices[0]):
+        for dist, idx in zip(dist_list, idx_list):
             if idx < 0 or idx >= len(self.metadata_store):
                 continue
             meta = self.metadata_store[idx]
@@ -118,7 +152,7 @@ class MultiIdentityIndexer:
         return {
             "duplicate_detected": duplicate_flag,
             "threshold": self.DUPLICATE_THRESHOLD,
-            "total_records_searched": self.index.ntotal,
+            "total_records_searched": total,
             "primary_alert": primary_alert,
             "matches": matches,
             "indexer_version": self.version
