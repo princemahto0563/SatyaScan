@@ -131,6 +131,51 @@ class AuditVerificationResult(BaseModel):
     status_message: str
 
 
+# --- Reference Comparison & Discrepancy Schemas ---
+
+class FieldDiffItemSchema(BaseModel):
+    field: str
+    reference_value: str
+    observed_value: str
+    status: str
+    severity: str
+    rationale: str
+
+
+class FieldComparisonSummarySchema(BaseModel):
+    document_type: str
+    total_compared_fields: int
+    matched_fields: int
+    mismatched_fields: int
+    unknown_fields: int
+    identity_critical_mismatches: int
+    document_control_mismatches: int
+    consistency_label: str
+    overall_severity: str
+    severity_note: str
+    diffs: List[FieldDiffItemSchema]
+
+
+class ReferenceBaselineInfoSchema(BaseModel):
+    reference_id: str
+    document_type: str
+    reference_hash: str
+    observed_hash: str
+
+
+class LinkageResultSchema(BaseModel):
+    overall_linkage_status: str
+    passport_number_linked: bool
+    fields_compared: int
+    matched_fields: int
+    mismatched_fields: int
+    unknown_fields: int
+    biometric_linkage_status: str
+    biometric_similarity: Optional[float] = None
+    officer_summary: str
+    field_results: List[Dict[str, Any]]
+
+
 # --- Screening Response Schemas ---
 
 class ScreeningSummaryResponse(BaseModel):
@@ -182,6 +227,10 @@ class ScreeningDetailResponse(BaseModel):
     signal_breakdown: Dict[str, float]
     audit_trail: List[AuditEventSchema]
     blockchain_anchor: Optional[Dict[str, Any]] = None
+
+    reference_comparison: Optional[FieldComparisonSummarySchema] = None
+    reference_baseline: Optional[ReferenceBaselineInfoSchema] = None
+    passport_visa_linkage: Optional[LinkageResultSchema] = None
 
     class Config:
         from_attributes = True

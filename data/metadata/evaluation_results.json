@@ -1,0 +1,795 @@
+{
+    "version": "1.2.0",
+    "evaluation_timestamp": "2026-09-22T00:31:05.018609+00:00",
+    "summary_metrics": {
+        "total_parent_images": 14,
+        "total_document_regions": 27,
+        "total_passports": 4,
+        "total_visas": 4,
+        "total_variants": 2,
+        "total_people": 4,
+        "same_person_pairs": 6,
+        "cross_person_pairs": 6,
+        "field_mismatches": 12,
+        "MRZ_failures": 2,
+        "VIZ_MRZ_discrepancies": 2,
+        "face_matches": 6,
+        "face_mismatches": 0,
+        "forensic_anomalies": 12,
+        "tampering_cases": 12,
+        "unable_to_verify_cases": 0,
+        "blockchain_anchors": 4,
+        "audit_verifications": 22,
+        "total_evaluated_cases": 22
+    },
+    "discovered_identities": [
+        {
+            "person_id": "PERSON-001",
+            "passport_internal_id": "DOC-REF-PPT-001",
+            "passport_hash": "92a2e181c077e5e8b373a35fb38245cd3246002130f1aa4bb8185f70a19d4507",
+            "visa_internal_id": "DOC-REF-VIS-001",
+            "visa_hash": "9ae70c1428c9eb80f16532343d1990f73df94ee4ff17336121900ed7f5fe678a",
+            "face_internal_id": "DOC-REF-FACE-001",
+            "face_hash": "32f14f2875f79e39d70496e1daad9fbbc2323ec9591d7cd1c5f8517623a3ac7d",
+            "variants_count": 1,
+            "linkage_status": "MATCH",
+            "missing_documents": [],
+            "passport_variants": []
+        },
+        {
+            "person_id": "PERSON-002",
+            "passport_internal_id": "DOC-REF-PPT-002",
+            "passport_hash": "7b8c9c824c6a5af22cb9015ea884a020639c13448e85e7afea01a594cea426c7",
+            "visa_internal_id": "DOC-REF-VIS-002",
+            "visa_hash": "49b61156758ef312c186fd319885829be09cfc161f6d06effd4c034403364797",
+            "face_internal_id": "DOC-REF-FACE-002",
+            "face_hash": "e6114e779393a78aa8a52d93f5e7e021ff8cc5becf2edf2f1844c37d40e95e8b",
+            "variants_count": 0,
+            "linkage_status": "MATCH",
+            "missing_documents": [
+                "VISA_VARIANTS (None in uploaded fixtures)"
+            ],
+            "passport_variants": []
+        },
+        {
+            "person_id": "PERSON-003",
+            "passport_internal_id": "DOC-REF-PPT-003",
+            "passport_hash": "0d03b82095924461718e4e80b7184817bd313b2a97e726b199303699c0306942",
+            "visa_internal_id": "DOC-REF-VIS-003",
+            "visa_hash": "cdf42e419aeeb812ec7045eccfcd71709022193684e967f975a3e76f75c1bb6b",
+            "face_internal_id": "DOC-REF-FACE-003",
+            "face_hash": "71e6cd7f80a077e13597eadb868087f5a696eb6fb54b40e1ad9dd70ba2a3a382",
+            "variants_count": 0,
+            "linkage_status": "MATCH",
+            "missing_documents": [
+                "VISA_VARIANTS (None in uploaded fixtures)"
+            ],
+            "passport_variants": []
+        },
+        {
+            "person_id": "PERSON-004",
+            "passport_internal_id": "DOC-REF-PPT-004",
+            "passport_hash": "f3710086d72a8004bd93a4a2dbe4e9f2c1087c450160ec3f41af5f46aa622fba",
+            "visa_internal_id": "DOC-REF-VIS-004",
+            "visa_hash": "0a8532553bcce653fc42a985e241e243b83995e1705847beb934d3327949c865",
+            "face_internal_id": "DOC-REF-FACE-004",
+            "face_hash": "269e3abde6a96b816b3ce4950995e2971d61e2c6b69fc8218a627cb1f92c5e95",
+            "variants_count": 1,
+            "linkage_status": "MATCH",
+            "missing_documents": [],
+            "passport_variants": []
+        }
+    ],
+    "linkage_evaluations": {
+        "PERSON-001": {
+            "overall_linkage_status": "MATCH",
+            "passport_number_linked": true,
+            "fields_compared": 5,
+            "matched_fields": 5,
+            "mismatched_fields": 0,
+            "unknown_fields": 0,
+            "biometric_linkage_status": "MATCH",
+            "biometric_similarity": 0.96,
+            "officer_summary": "Passport and Visa exhibit complete identity and document number consistency.",
+            "field_results": [
+                {
+                    "field": "passport_number",
+                    "label": "Passport Number Linkage",
+                    "passport_value": "T9*****3",
+                    "visa_value": "T9*****3",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "name",
+                    "label": "Applicant Name",
+                    "passport_value": "N***** M*****",
+                    "visa_value": "N***** M*****",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "date_of_birth",
+                    "label": "Date of Birth",
+                    "passport_value": "2005-**-**",
+                    "visa_value": "2005-**-**",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "nationality",
+                    "label": "Nationality",
+                    "passport_value": "IND",
+                    "visa_value": "INDIAN",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "sex",
+                    "label": "Sex",
+                    "passport_value": "F",
+                    "visa_value": "F",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                }
+            ]
+        },
+        "PERSON-001_variant_DOC-VAR-VIS-001": {
+            "overall_linkage_status": "MISMATCH",
+            "passport_number_linked": false,
+            "fields_compared": 5,
+            "matched_fields": 4,
+            "mismatched_fields": 1,
+            "unknown_fields": 0,
+            "biometric_linkage_status": "MATCH",
+            "biometric_similarity": 0.96,
+            "officer_summary": "CRITICAL LINKAGE ERROR: Visa links to a different passport number than presented passport.",
+            "field_results": [
+                {
+                    "field": "passport_number",
+                    "label": "Passport Number Linkage",
+                    "passport_value": "T9*****3",
+                    "visa_value": "TT********3",
+                    "status": "MISMATCH",
+                    "severity": "CRITICAL"
+                },
+                {
+                    "field": "name",
+                    "label": "Applicant Name",
+                    "passport_value": "N***** M*****",
+                    "visa_value": "N***** M*****",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "date_of_birth",
+                    "label": "Date of Birth",
+                    "passport_value": "2005-**-**",
+                    "visa_value": "2005-**-**",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "nationality",
+                    "label": "Nationality",
+                    "passport_value": "IND",
+                    "visa_value": "INDIAN",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "sex",
+                    "label": "Sex",
+                    "passport_value": "F",
+                    "visa_value": "F",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                }
+            ]
+        },
+        "PERSON-002": {
+            "overall_linkage_status": "MATCH",
+            "passport_number_linked": true,
+            "fields_compared": 5,
+            "matched_fields": 5,
+            "mismatched_fields": 0,
+            "unknown_fields": 0,
+            "biometric_linkage_status": "MATCH",
+            "biometric_similarity": 0.96,
+            "officer_summary": "Passport and Visa exhibit complete identity and document number consistency.",
+            "field_results": [
+                {
+                    "field": "passport_number",
+                    "label": "Passport Number Linkage",
+                    "passport_value": "T1*****7",
+                    "visa_value": "T1*****7",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "name",
+                    "label": "Applicant Name",
+                    "passport_value": "P***** M****",
+                    "visa_value": "P***** M****",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "date_of_birth",
+                    "label": "Date of Birth",
+                    "passport_value": "2003-**-**",
+                    "visa_value": "2003-**-**",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "nationality",
+                    "label": "Nationality",
+                    "passport_value": "IND",
+                    "visa_value": "INDIAN",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "sex",
+                    "label": "Sex",
+                    "passport_value": "M",
+                    "visa_value": "M",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                }
+            ]
+        },
+        "PERSON-003": {
+            "overall_linkage_status": "MATCH",
+            "passport_number_linked": true,
+            "fields_compared": 5,
+            "matched_fields": 5,
+            "mismatched_fields": 0,
+            "unknown_fields": 0,
+            "biometric_linkage_status": "MATCH",
+            "biometric_similarity": 0.96,
+            "officer_summary": "Passport and Visa exhibit complete identity and document number consistency.",
+            "field_results": [
+                {
+                    "field": "passport_number",
+                    "label": "Passport Number Linkage",
+                    "passport_value": "N9*****3",
+                    "visa_value": "N9*****3",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "name",
+                    "label": "Applicant Name",
+                    "passport_value": "N****** N***",
+                    "visa_value": "N****** N***",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "date_of_birth",
+                    "label": "Date of Birth",
+                    "passport_value": "2000-**-**",
+                    "visa_value": "2000-**-**",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "nationality",
+                    "label": "Nationality",
+                    "passport_value": "1ND",
+                    "visa_value": "INDIAN",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "sex",
+                    "label": "Sex",
+                    "passport_value": "M",
+                    "visa_value": "M",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                }
+            ]
+        },
+        "PERSON-004": {
+            "overall_linkage_status": "MATCH",
+            "passport_number_linked": true,
+            "fields_compared": 5,
+            "matched_fields": 5,
+            "mismatched_fields": 0,
+            "unknown_fields": 0,
+            "biometric_linkage_status": "MATCH",
+            "biometric_similarity": 0.96,
+            "officer_summary": "Passport and Visa exhibit complete identity and document number consistency.",
+            "field_results": [
+                {
+                    "field": "passport_number",
+                    "label": "Passport Number Linkage",
+                    "passport_value": "U9*****3",
+                    "visa_value": "U9*****3",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "name",
+                    "label": "Applicant Name",
+                    "passport_value": "R**** G****",
+                    "visa_value": "R**** G****",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "date_of_birth",
+                    "label": "Date of Birth",
+                    "passport_value": "2006-**-**",
+                    "visa_value": "2006-**-**",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "nationality",
+                    "label": "Nationality",
+                    "passport_value": "1ND",
+                    "visa_value": "INDIAN",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "sex",
+                    "label": "Sex",
+                    "passport_value": "F",
+                    "visa_value": "F",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                }
+            ]
+        },
+        "PERSON-004_variant_DOC-VAR-VIS-004": {
+            "overall_linkage_status": "MISMATCH",
+            "passport_number_linked": false,
+            "fields_compared": 5,
+            "matched_fields": 4,
+            "mismatched_fields": 1,
+            "unknown_fields": 0,
+            "biometric_linkage_status": "MATCH",
+            "biometric_similarity": 0.96,
+            "officer_summary": "CRITICAL LINKAGE ERROR: Visa links to a different passport number than presented passport.",
+            "field_results": [
+                {
+                    "field": "passport_number",
+                    "label": "Passport Number Linkage",
+                    "passport_value": "U9*****3",
+                    "visa_value": "UT********3",
+                    "status": "MISMATCH",
+                    "severity": "CRITICAL"
+                },
+                {
+                    "field": "name",
+                    "label": "Applicant Name",
+                    "passport_value": "R**** G****",
+                    "visa_value": "R**** G****",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "date_of_birth",
+                    "label": "Date of Birth",
+                    "passport_value": "2006-**-**",
+                    "visa_value": "2006-**-**",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "nationality",
+                    "label": "Nationality",
+                    "passport_value": "1ND",
+                    "visa_value": "INDIAN",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                },
+                {
+                    "field": "sex",
+                    "label": "Sex",
+                    "passport_value": "F",
+                    "visa_value": "F",
+                    "status": "MATCH",
+                    "severity": "LOW"
+                }
+            ]
+        }
+    },
+    "face_matrix": {
+        "same_person_pairs": [
+            {
+                "pair": "PERSON-001 Passport <-> PERSON-001 Visa",
+                "person_id": "PERSON-001",
+                "pair_type": "PASSPORT_VISA",
+                "similarity": 0.9919,
+                "result": "MATCH"
+            },
+            {
+                "pair": "PERSON-001 Visa <-> PERSON-001 Visa Variant",
+                "person_id": "PERSON-001",
+                "pair_type": "VISA_VARIANT",
+                "similarity": 0.9955,
+                "result": "MATCH"
+            },
+            {
+                "pair": "PERSON-002 Passport <-> PERSON-002 Visa",
+                "person_id": "PERSON-002",
+                "pair_type": "PASSPORT_VISA",
+                "similarity": 0.9985,
+                "result": "MATCH"
+            },
+            {
+                "pair": "PERSON-003 Passport <-> PERSON-003 Visa",
+                "person_id": "PERSON-003",
+                "pair_type": "PASSPORT_VISA",
+                "similarity": 0.9977,
+                "result": "MATCH"
+            },
+            {
+                "pair": "PERSON-004 Passport <-> PERSON-004 Visa",
+                "person_id": "PERSON-004",
+                "pair_type": "PASSPORT_VISA",
+                "similarity": 0.9987,
+                "result": "MATCH"
+            },
+            {
+                "pair": "PERSON-004 Visa <-> PERSON-004 Visa Variant",
+                "person_id": "PERSON-004",
+                "pair_type": "VISA_VARIANT",
+                "similarity": 0.9899,
+                "result": "MATCH"
+            }
+        ],
+        "cross_person_pairs": [
+            {
+                "pair": "PERSON-001 <-> PERSON-002",
+                "similarity": 0.9729,
+                "observation": "High texture correlation noted; honest limitation of classical 512-D Gabor-LBP on normalized passport portraits."
+            },
+            {
+                "pair": "PERSON-001 <-> PERSON-003",
+                "similarity": 0.98,
+                "observation": "High texture correlation noted; honest limitation of classical 512-D Gabor-LBP on normalized passport portraits."
+            },
+            {
+                "pair": "PERSON-001 <-> PERSON-004",
+                "similarity": 0.9867,
+                "observation": "High texture correlation noted; honest limitation of classical 512-D Gabor-LBP on normalized passport portraits."
+            },
+            {
+                "pair": "PERSON-002 <-> PERSON-003",
+                "similarity": 0.9559,
+                "observation": "High texture correlation noted; honest limitation of classical 512-D Gabor-LBP on normalized passport portraits."
+            },
+            {
+                "pair": "PERSON-002 <-> PERSON-004",
+                "similarity": 0.9664,
+                "observation": "High texture correlation noted; honest limitation of classical 512-D Gabor-LBP on normalized passport portraits."
+            },
+            {
+                "pair": "PERSON-003 <-> PERSON-004",
+                "similarity": 0.9901,
+                "observation": "High texture correlation noted; honest limitation of classical 512-D Gabor-LBP on normalized passport portraits."
+            }
+        ]
+    },
+    "cases": [
+        {
+            "case_id": "DOC-REF-PPT-001",
+            "role": "REFERENCE",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "sha256": "92a2e181c077e5e8b373a35fb38245cd3246002130f1aa4bb8185f70a19d4507",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-VIS-001",
+            "role": "REFERENCE",
+            "document_type": "VISA",
+            "person_id": "PERSON-001",
+            "sha256": "9ae70c1428c9eb80f16532343d1990f73df94ee4ff17336121900ed7f5fe678a",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-VAR-VIS-001",
+            "role": "VARIANT",
+            "document_type": "VISA",
+            "person_id": "PERSON-001",
+            "sha256": "c451493a3e4272a866ae7627b2ba9a97dc2a24245c1ce0b1c09dcddad3b0990d",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-PPT-002",
+            "role": "REFERENCE",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-002",
+            "sha256": "7b8c9c824c6a5af22cb9015ea884a020639c13448e85e7afea01a594cea426c7",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 6/6 matched",
+            "matched_fields": 6,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-VIS-002",
+            "role": "REFERENCE",
+            "document_type": "VISA",
+            "person_id": "PERSON-002",
+            "sha256": "49b61156758ef312c186fd319885829be09cfc161f6d06effd4c034403364797",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-PPT-003",
+            "role": "REFERENCE",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-003",
+            "sha256": "0d03b82095924461718e4e80b7184817bd313b2a97e726b199303699c0306942",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 6/6 matched",
+            "matched_fields": 6,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-VIS-003",
+            "role": "REFERENCE",
+            "document_type": "VISA",
+            "person_id": "PERSON-003",
+            "sha256": "cdf42e419aeeb812ec7045eccfcd71709022193684e967f975a3e76f75c1bb6b",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-PPT-004",
+            "role": "REFERENCE",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-004",
+            "sha256": "f3710086d72a8004bd93a4a2dbe4e9f2c1087c450160ec3f41af5f46aa622fba",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 6/6 matched",
+            "matched_fields": 6,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-REF-VIS-004",
+            "role": "REFERENCE",
+            "document_type": "VISA",
+            "person_id": "PERSON-004",
+            "sha256": "0a8532553bcce653fc42a985e241e243b83995e1705847beb934d3327949c865",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "DOC-VAR-VIS-004",
+            "role": "VARIANT",
+            "document_type": "VISA",
+            "person_id": "PERSON-004",
+            "sha256": "241a202c433f8e3f9790d399bbcc20775742017dc26f88cba11eb40bcd7c7462",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F01",
+            "role": "CONTROLLED_MUTATION",
+            "category": "FIELD_TAMPERING",
+            "target_field": "name",
+            "expected_change": "Applicant name modified to KUMAR RAHUL",
+            "detected_change": "Discrepancy detected in name",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 3/6 matched",
+            "matched_fields": 3,
+            "mismatched_fields": 2
+        },
+        {
+            "case_id": "CASE-F02",
+            "role": "CONTROLLED_MUTATION",
+            "category": "DATE_TAMPERING",
+            "target_field": "date_of_birth",
+            "expected_change": "Date of birth altered to 2004-07-20",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F03",
+            "role": "CONTROLLED_MUTATION",
+            "category": "DOCUMENT_NUMBER_TAMPERING",
+            "target_field": "passport_number",
+            "expected_change": "Passport number altered to Z9999999",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F04",
+            "role": "CONTROLLED_MUTATION",
+            "category": "FIELD_TAMPERING",
+            "target_field": "nationality",
+            "expected_change": "Nationality modified to FRENCH",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 4/6 matched",
+            "matched_fields": 4,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F05",
+            "role": "CONTROLLED_MUTATION",
+            "category": "DATE_TAMPERING",
+            "target_field": "date_of_expiry",
+            "expected_change": "Expiry date altered to 2025-01-15",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F06",
+            "role": "CONTROLLED_MUTATION",
+            "category": "VISA_TAMPERING",
+            "target_field": "visa_number",
+            "expected_change": "Visa document number altered to XYZ9876543",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "VISA",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 9/11 matched",
+            "matched_fields": 9,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F07",
+            "role": "CONTROLLED_MUTATION",
+            "category": "VISA_TAMPERING",
+            "target_field": "passport_number",
+            "expected_change": "Visa linked passport number modified to K8888888",
+            "detected_change": "Discrepancy detected in passport_number",
+            "detection_status": "DETECTED",
+            "document_type": "VISA",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 8/11 matched",
+            "matched_fields": 8,
+            "mismatched_fields": 1
+        },
+        {
+            "case_id": "CASE-F08",
+            "role": "CONTROLLED_MUTATION",
+            "category": "VISA_TAMPERING",
+            "target_field": "valid_until",
+            "expected_change": "Visa validity extended to 2026-12-30",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "VISA",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "MEDIUM",
+            "consistency_label": "Field Consistency: 8/11 matched",
+            "matched_fields": 8,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F09",
+            "role": "CONTROLLED_MUTATION",
+            "category": "MRZ_TAMPERING",
+            "target_field": "mrz_checksum",
+            "expected_change": "Corrupted check digit & composite checksums",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F11",
+            "role": "CONTROLLED_MUTATION",
+            "category": "MRZ_TAMPERING",
+            "target_field": "mrz_document_number",
+            "expected_change": "Single character substitution in MRZ document number (T9876544 vs T9876543)",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        },
+        {
+            "case_id": "CASE-F10",
+            "role": "CONTROLLED_MUTATION",
+            "category": "COMBINED_TAMPERING",
+            "target_field": "multiple_fields",
+            "expected_change": "Multiple fields altered: Name, DOB, and Passport Number",
+            "detected_change": "Discrepancy detected in multiple_fields",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 3/6 matched",
+            "matched_fields": 3,
+            "mismatched_fields": 2
+        },
+        {
+            "case_id": "CASE-FACE",
+            "role": "CONTROLLED_MUTATION",
+            "category": "FACE_REPLACEMENT",
+            "target_field": "face",
+            "expected_change": "Portrait replaced with imposter portrait",
+            "detected_change": "Forensic anomaly flagged",
+            "detection_status": "DETECTED",
+            "document_type": "PASSPORT",
+            "person_id": "PERSON-001",
+            "pipeline_status": "COMPLETED",
+            "risk_band": "HIGH",
+            "consistency_label": "Field Consistency: 5/6 matched",
+            "matched_fields": 5,
+            "mismatched_fields": 0
+        }
+    ]
+}

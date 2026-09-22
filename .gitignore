@@ -76,3 +76,14 @@ blockchain/ledgers/
 *.priv
 peerOrganizations/
 ordererOrganizations/
+
+# Evaluation & Reference Datasets (Excluded from VCS to protect document & biometric privacy)
+.user_uploaded/
+.user_uploaded/**
+data/evaluation_input/
+data/evaluation_input/**
+data/reference/
+data/reference/**
+data/mutations/
+data/mutations/**
+data/metadata/*.local.json

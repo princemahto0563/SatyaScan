@@ -129,17 +129,39 @@ class DocumentClassifier:
         visa_match = self._check_visa_patterns(upper_text, ocr_lines)
         passport_match = self._check_passport_patterns(upper_text, ocr_lines, cv_img)
 
-        # If strong Visa indicators are present and no MRZ is present, it is a VISA
-        if visa_match["detected"] and (passport_match.get("mrz_count", 0) == 0 or visa_match["confidence"] > passport_match["confidence"]):
-            return {
-                "verdict": "VISA",
-                "detected_type": "VISA",
-                "is_supported": True,
-                "confidence": visa_match["confidence"],
-                "indicators": visa_match["indicators"],
-                "message": "Valid visa vignette detected.",
-                "raw_text": raw_text[:500]
-            }
+        # Check for genuine TD3 Passport MRZ (2 lines with heavy filler '<')
+        has_genuine_passport_mrz = (
+            passport_match.get("mrz_count", 0) >= 2
+            or (
+                any(line.replace(" ", "").upper().startswith(("P<IND", "P<USA", "P<GBR", "P<CAN", "P<AUS")) for line in ocr_lines)
+                and any(line.replace(" ", "").count("<") >= 8 for line in ocr_lines)
+            )
+        )
+
+        # Disambiguation:
+        # Visas routinely reference the bearer's "Passport No", which can falsely trigger passport keywords.
+        # But genuine Passports do not have Visa headers, Visa Categories, Stay Durations, or Entry conditions.
+        if visa_match["detected"] and passport_match["detected"]:
+            if has_genuine_passport_mrz and len(visa_match["indicators"]) < 3:
+                return {
+                    "verdict": "PASSPORT",
+                    "detected_type": "PASSPORT",
+                    "is_supported": True,
+                    "confidence": passport_match["confidence"],
+                    "indicators": passport_match["indicators"],
+                    "message": "Valid passport layout detected.",
+                    "raw_text": raw_text[:500]
+                }
+            else:
+                return {
+                    "verdict": "VISA",
+                    "detected_type": "VISA",
+                    "is_supported": True,
+                    "confidence": visa_match["confidence"],
+                    "indicators": visa_match["indicators"],
+                    "message": "Valid visa vignette detected.",
+                    "raw_text": raw_text[:500]
+                }
 
         if passport_match["detected"]:
             return {

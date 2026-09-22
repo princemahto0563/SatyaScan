@@ -7,7 +7,7 @@ Protected by JWT authentication, RBAC, input validation, and rate limiting.
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
 import uuid
 import json
@@ -235,6 +235,39 @@ def list_screenings(
         .all()
     )
     return screenings
+
+@router.get("/references", response_model=List[Dict[str, Any]])
+def list_reference_baselines(current_user: User = Depends(get_current_user)):
+    """
+    Returns available controlled reference baselines for officer screening demonstrations.
+    Excludes sensitive PII and exposes only cryptographic integrity digests and schema metadata.
+    """
+    manifest_path = os.path.join(settings.DATA_DIR, "metadata", "reference_manifest.local.json")
+    if not os.path.exists(manifest_path):
+        return []
+    try:
+        with open(manifest_path, "r") as mf:
+            data = json.load(mf)
+        return data.get("records", [])
+    except Exception:
+        return []
+
+
+@router.get("/reference-dataset", response_model=Dict[str, Any])
+def get_reference_dataset(current_user: User = Depends(get_current_user)):
+    """
+    Returns complete multi-person evaluation dataset metrics, discovered identities (PERSON-001 - PERSON-004),
+    linkage cross-checks, and biometric cross-matching matrix.
+    """
+    results_path = os.path.join(settings.DATA_DIR, "metadata", "evaluation_results.json")
+    if not os.path.exists(results_path):
+        return {}
+    try:
+        with open(results_path, "r") as rf:
+            return json.load(rf)
+    except Exception:
+        return {}
+
 
 
 @router.get("/{screening_id}", response_model=ScreeningDetailResponse)

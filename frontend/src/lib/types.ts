@@ -124,6 +124,61 @@ export interface ScreeningDetail {
   signal_breakdown: Record<string, number>;
   audit_trail: AuditEvent[];
   blockchain_anchor?: BlockchainAnchor | null;
+  reference_comparison?: FieldComparisonSummary | null;
+  reference_baseline?: ReferenceBaselineInfo | null;
+  passport_visa_linkage?: LinkageResult | null;
+}
+
+export interface FieldDiffItem {
+  field: string;
+  reference_value: string;
+  observed_value: string;
+  status: "MATCH" | "MISMATCH" | "UNKNOWN";
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  rationale: string;
+}
+
+export interface FieldComparisonSummary {
+  document_type: string;
+  total_compared_fields: number;
+  matched_fields: number;
+  mismatched_fields: number;
+  unknown_fields: number;
+  identity_critical_mismatches: number;
+  document_control_mismatches: number;
+  consistency_label: string;
+  overall_severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+  severity_note: string;
+  diffs: FieldDiffItem[];
+}
+
+export interface ReferenceBaselineInfo {
+  reference_id: string;
+  document_type: string;
+  reference_hash: string;
+  observed_hash: string;
+}
+
+export interface LinkageFieldResult {
+  field: string;
+  label: string;
+  passport_value: string;
+  visa_value: string;
+  status: "MATCH" | "MISMATCH" | "UNKNOWN";
+  severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+}
+
+export interface LinkageResult {
+  overall_linkage_status: "MATCH" | "PARTIAL_MATCH" | "MISMATCH" | "UNABLE_TO_VERIFY";
+  passport_number_linked: boolean;
+  fields_compared: number;
+  matched_fields: number;
+  mismatched_fields: number;
+  unknown_fields: number;
+  biometric_linkage_status: string;
+  biometric_similarity?: number | null;
+  officer_summary: string;
+  field_results: LinkageFieldResult[];
 }
 
 export interface BlockchainAnchor {

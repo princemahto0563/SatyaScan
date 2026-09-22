@@ -1,0 +1,98 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SatyaScanReferenceManifestSchema",
+  "description": "Schema for SatyaScan local reference document records and manifests",
+  "type": "object",
+  "required": ["version", "created_at", "total_records", "records"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "example": "1.0.0"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "total_records": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "internal_id",
+          "person_id",
+          "document_type",
+          "evaluation_role",
+          "sha256_hash",
+          "field_availability"
+        ],
+        "properties": {
+          "internal_id": {
+            "type": "string",
+            "example": "DOC-REF-001"
+          },
+          "person_id": {
+            "type": "string",
+            "pattern": "^PERSON-\\d{3,}$",
+            "example": "PERSON-001"
+          },
+          "document_type": {
+            "type": "string",
+            "enum": ["PASSPORT", "VISA"]
+          },
+          "evaluation_role": {
+            "type": "string",
+            "enum": ["REFERENCE", "VARIANT", "DUPLICATE", "MUTATION"]
+          },
+          "source_file_name": {
+            "type": "string"
+          },
+          "sha256_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "source_image_hash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "is_collage": {
+            "type": "boolean"
+          },
+          "has_face": {
+            "type": "boolean"
+          },
+          "has_mrz": {
+            "type": "boolean"
+          },
+          "demo_marking_visible": {
+            "type": "boolean"
+          },
+          "field_availability": {
+            "type": "object",
+            "properties": {
+              "surname": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "given_names": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "document_number": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "nationality": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "date_of_birth": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "sex": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "date_of_expiry": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "date_of_issue": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN"] },
+              "visa_type": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN", "NOT_APPLICABLE"] },
+              "valid_from": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN", "NOT_APPLICABLE"] },
+              "valid_until": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN", "NOT_APPLICABLE"] },
+              "entries": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN", "NOT_APPLICABLE"] },
+              "stay_duration": { "type": "string", "enum": ["AVAILABLE", "UNKNOWN", "NOT_APPLICABLE"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

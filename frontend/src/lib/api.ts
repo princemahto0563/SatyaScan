@@ -355,3 +355,28 @@ export async function getWatchlist() {
   }
   return res.json();
 }
+
+export async function getReferenceBaselines(): Promise<any[]> {
+  try {
+    const res = await authenticatedFetch(`${API_BASE_URL}/screenings/references`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.error("[SatyaScan Baseline] Failed to load reference baselines:", err);
+  }
+  return [];
+}
+
+export async function getReferenceDataset(): Promise<any> {
+  try {
+    const res = await authenticatedFetch(`${API_BASE_URL}/screenings/reference-dataset`);
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch (err) {
+    console.error("[SatyaScan Reference] Failed to load reference dataset:", err);
+  }
+  return null;
+}
+
