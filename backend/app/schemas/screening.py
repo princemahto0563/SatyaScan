@@ -98,7 +98,39 @@ class FaceResultSchema(BaseModel):
     appearance_level: str = "MINIMAL"
     observations: List[str] = []
     recommendation: Optional[str] = None
+    provider: Optional[str] = "GaborLBP-512d-v1.2"
+    quality_status: Optional[str] = None
+    quality_reasons: List[str] = []
+    pad_status: Optional[str] = "NOT_AVAILABLE"
+    pad_reason: Optional[str] = None
     disclaimer: str = "Similarity score is a model-derived metric, not a probability."
+
+
+class BiometricQualitySchema(BaseModel):
+    status: str = "GOOD"
+    reasons: List[str] = []
+    face_count: int = 1
+    sharpness: Optional[float] = None
+    brightness: Optional[float] = None
+    contrast: Optional[float] = None
+    face_size_ratio: Optional[float] = None
+
+
+class BiometricPADSchema(BaseModel):
+    status: str = "NOT_AVAILABLE"
+    reason: str = "Presentation-attack detection is not enabled in this prototype."
+
+
+class BiometricVerificationSchema(BaseModel):
+    status: str
+    provider: str
+    similarity: float
+    threshold: float
+    quality: BiometricQualitySchema
+    presentation_attack: BiometricPADSchema
+    appearance_variation: str = "MINIMAL"
+    explanation: str
+    disclaimer: str = "Biometric similarity is a model-derived metric, not a certified identity probability."
 
 
 class IdentityMatchSchema(BaseModel):
@@ -222,6 +254,7 @@ class ScreeningDetailResponse(BaseModel):
     tamper_findings: List[TamperFindingSchema]
     tamper_summary: Dict[str, Any]
     face_result: Optional[FaceResultSchema] = None
+    biometric_verification: Optional[BiometricVerificationSchema] = None
     identity_matches: List[IdentityMatchSchema]
     risk_reasons: List[Dict[str, Any]]
     signal_breakdown: Dict[str, float]

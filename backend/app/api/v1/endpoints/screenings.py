@@ -358,8 +358,13 @@ def get_screening_detail(
         })
 
     reconstructed_face = None
+    reconstructed_biometric = None
     if face_res:
         obs = json.loads(face_res.observations_json) if face_res.observations_json else []
+        provider_val = getattr(face_res, "provider", None) or "GaborLBP-512d-v1.2"
+        quality_val = getattr(face_res, "quality_status", None) or "GOOD"
+        pad_val = getattr(face_res, "pad_status", None) or "NOT_AVAILABLE"
+        pad_reason_val = getattr(face_res, "pad_reason", None) or "Presentation-attack detection is not enabled in this prototype."
         reconstructed_face = {
             "metric": face_res.metric,
             "similarity_score": face_res.similarity_score,
@@ -367,7 +372,28 @@ def get_screening_detail(
             "verification_result": face_res.verification_result,
             "appearance_level": face_res.appearance_level,
             "observations": obs,
-            "recommendation": face_res.recommendation
+            "recommendation": face_res.recommendation,
+            "provider": provider_val,
+            "quality_status": quality_val,
+            "pad_status": pad_val,
+            "pad_reason": pad_reason_val
+        }
+        reconstructed_biometric = {
+            "status": face_res.verification_result,
+            "provider": provider_val,
+            "similarity": face_res.similarity_score,
+            "threshold": face_res.threshold,
+            "quality": {
+                "status": quality_val,
+                "reasons": []
+            },
+            "presentation_attack": {
+                "status": pad_val,
+                "reason": pad_reason_val
+            },
+            "appearance_variation": face_res.appearance_level,
+            "explanation": face_res.recommendation or "",
+            "disclaimer": "Biometric similarity is a model-derived metric, not a certified identity probability."
         }
 
     return {
@@ -396,6 +422,7 @@ def get_screening_detail(
             "findings_count": len(tamper_findings)
         },
         "face_result": reconstructed_face,
+        "biometric_verification": reconstructed_biometric,
         "identity_matches": id_matches,
         "risk_reasons": [],
         "signal_breakdown": {

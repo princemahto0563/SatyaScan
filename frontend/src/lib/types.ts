@@ -39,6 +39,34 @@ export interface FaceResult {
   appearance_level: "MINIMAL" | "MODERATE" | "SIGNIFICANT";
   observations: string[];
   recommendation?: string;
+  provider?: string;
+  quality_status?: string;
+  quality_reasons?: string[];
+  pad_status?: string;
+  pad_reason?: string;
+  disclaimer: string;
+}
+
+export interface BiometricVerification {
+  status: "MATCH" | "BORDERLINE" | "MISMATCH" | "UNABLE_TO_VERIFY";
+  provider: string;
+  similarity: number;
+  threshold: number;
+  quality: {
+    status: "GOOD" | "ACCEPTABLE" | "POOR" | "UNABLE_TO_VERIFY";
+    reasons: string[];
+    face_count?: number;
+    sharpness?: number;
+    brightness?: number;
+    contrast?: number;
+    face_size_ratio?: number;
+  };
+  presentation_attack: {
+    status: "PASS" | "REVIEW" | "FAIL" | "NOT_AVAILABLE";
+    reason: string;
+  };
+  appearance_variation: "MINIMAL" | "MODERATE" | "SIGNIFICANT";
+  explanation: string;
   disclaimer: string;
 }
 
@@ -113,6 +141,7 @@ export interface ScreeningDetail {
     };
   };
   face_result?: FaceResult | null;
+  biometric_verification?: BiometricVerification | null;
   identity_matches: IdentityMatch[];
   risk_reasons: Array<{
     category: string;

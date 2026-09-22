@@ -264,6 +264,11 @@ class ReportGenerator:
         face_verdict = html.escape(str(face.get("verification_result", "NOT_RUN")))
         face_rec = html.escape(str(face.get("recommendation", "N/A")))
 
+        bio_provider = html.escape(str(face.get("provider", "GaborLBP-512d-v1.2")))
+        bio_quality = html.escape(str(face.get("quality_status", "GOOD")))
+        bio_pad = html.escape(str(face.get("pad_status", "NOT_AVAILABLE")))
+        app_level = html.escape(str(face.get("appearance_level", "MINIMAL")))
+
         forensic_rows = [
             [
                 Paragraph("<b>Forensic Dimension</b>", cell_bold),
@@ -287,8 +292,17 @@ class ReportGenerator:
             ],
             [
                 Paragraph("Face Biometric Verification", cell_text),
-                Paragraph(f"Similarity: {face.get('similarity_score', 'N/A')} (Threshold: {face.get('threshold', 0.65)})", cell_text),
-                Paragraph(f"<b>{face_verdict}</b> — {face_rec}", cell_text)
+                Paragraph(
+                    f"Provider: <b>{bio_provider}</b><br/>"
+                    f"Similarity: {face.get('similarity_score', 'N/A')} (Thresh: {face.get('threshold', 0.65)})<br/>"
+                    f"Quality: {bio_quality} | PAD: {bio_pad}",
+                    cell_text
+                ),
+                Paragraph(
+                    f"<b>{face_verdict}</b> — {face_rec}<br/>"
+                    f"<i>Appearance variation: {app_level}. Biometric similarity is a forensic signal, not a standalone legal clearance.</i>",
+                    cell_text
+                )
             ]
         ]
         t_forensic = Table(forensic_rows, colWidths=[130, 124, 250])

@@ -576,10 +576,21 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3 text-xs space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="font-bold text-slate-900 dark:text-white">
-                          Identity comparison: {caseData.face_result.verification_result === "MATCH" ? "MATCH" : "MISMATCH"}
+                          Identity comparison: {caseData.face_result.verification_result === "MATCH" ? "MATCH" : caseData.face_result.verification_result}
                         </span>
                         <span className="text-slate-500 font-mono text-[11px]">
-                          Biometric score: {caseData.face_result.similarity_score.toFixed(2)} (Threshold: 0.65)
+                          Similarity: {caseData.face_result.similarity_score.toFixed(2)} (Threshold: {caseData.face_result.threshold || 0.65})
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-600 dark:text-slate-400">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-semibold">
+                          Provider: {caseData.face_result.provider || "GaborLBP-512d-v1.2"}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-semibold">
+                          Face Quality: {caseData.face_result.quality_status || "GOOD"}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-semibold">
+                          PAD: {caseData.face_result.pad_status || "NOT_AVAILABLE"} (Prototype)
                         </span>
                       </div>
                       <p className="text-slate-700 dark:text-slate-300 text-[11px]">
@@ -593,7 +604,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                           {caseData.face_result.appearance_level.toLowerCase()}
                         </span>
                         <p className="text-slate-600 dark:text-slate-400 mt-0.5">
-                          Interpretation: {caseData.face_result.recommendation || "Appearance changes were observed, but the available biometric similarity remains consistent."}
+                          Officer note: {caseData.face_result.recommendation || "Facial similarity is consistent with the photograph on the document. Visible appearance variation may be associated with normal changes such as facial hair or lighting."}
                         </p>
                       </div>
                     </div>
@@ -1042,14 +1053,19 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 </div>
 
                 <div className="text-left sm:text-right">
-                  <span className="text-xs text-slate-500 uppercase font-mono">Biometric Metric</span>
-                  <div className="text-xl font-bold font-mono text-slate-900 dark:text-white">
-                    {caseData.face_result.similarity_score.toFixed(2)}
-                    <span className="text-xs font-normal text-slate-500"> / 1.00</span>
+                  <span className="text-xs text-slate-500 uppercase font-mono">Biometric Provider</span>
+                  <div className="text-sm font-bold font-mono text-slate-900 dark:text-white">
+                    {caseData.face_result.provider || "GaborLBP-512d-v1.2"}
                   </div>
-                  <span className="text-[11px] text-slate-500">
-                    Gabor-LBP 512-d feature descriptor (Threshold: 0.65)
-                  </span>
+                  <div className="text-base font-bold font-mono text-slate-900 dark:text-white mt-1">
+                    Similarity: {caseData.face_result.similarity_score.toFixed(2)}
+                    <span className="text-xs font-normal text-slate-500"> (Threshold: {caseData.face_result.threshold || 0.65})</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 flex flex-wrap gap-2 justify-start sm:justify-end mt-1">
+                    <span>Quality: <b>{caseData.face_result.quality_status || "GOOD"}</b></span>
+                    <span>•</span>
+                    <span>PAD: <b>{caseData.face_result.pad_status || "NOT_AVAILABLE"} (Prototype)</b></span>
+                  </div>
                 </div>
               </div>
 
@@ -1590,7 +1606,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 <div className="flex items-center justify-between">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">Biometric Face</h4>
                   <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                    {personSameFace[0]?.similarity ? `${(personSameFace[0].similarity * 100).toFixed(1)}% MATCH` : "MATCH"}
+                    {personSameFace[0]?.similarity ? `SIM: ${personSameFace[0].similarity.toFixed(2)} | MATCH` : "MATCH"}
                   </span>
                 </div>
                 <div className="text-xs text-slate-600 dark:text-slate-400 font-mono space-y-1">

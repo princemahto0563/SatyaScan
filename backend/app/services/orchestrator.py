@@ -508,7 +508,11 @@ class ScreeningOrchestrator:
                 verification_result=face_res.get("verification_result", "MATCH"),
                 appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL"),
                 observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])),
-                recommendation=face_res.get("recommendation", "")
+                recommendation=face_res.get("recommendation", ""),
+                provider=face_res.get("provider", "GaborLBP-512d-v1.2"),
+                quality_status=face_res.get("live_quality", {}).get("status", "GOOD"),
+                pad_status=face_res.get("presentation_attack", {}).get("status", "NOT_AVAILABLE"),
+                pad_reason=face_res.get("presentation_attack", {}).get("reason")
             )
             db.add(fr_rec)
             face_record = {
@@ -518,7 +522,12 @@ class ScreeningOrchestrator:
                 "verification_result": fr_rec.verification_result,
                 "appearance_level": fr_rec.appearance_level,
                 "observations": face_res.get("appearance_analysis", {}).get("observations", []),
-                "recommendation": fr_rec.recommendation
+                "recommendation": fr_rec.recommendation,
+                "provider": fr_rec.provider,
+                "quality_status": fr_rec.quality_status,
+                "quality_reasons": face_res.get("live_quality", {}).get("reasons", []),
+                "pad_status": fr_rec.pad_status,
+                "pad_reason": fr_rec.pad_reason
             }
 
         identity_records = []
@@ -587,6 +596,7 @@ class ScreeningOrchestrator:
             "tamper_findings": tamper_records,
             "tamper_summary": tamper_res,
             "face_result": face_record,
+            "biometric_verification": face_res.get("biometric_verification") if face_res else None,
             "identity_matches": identity_records,
             "risk_reasons": risk_res["reasons"],
             "signal_breakdown": risk_res["signal_breakdown"],
@@ -803,7 +813,11 @@ class ScreeningOrchestrator:
                 verification_result=face_res.get("verification_result", "MATCH"),
                 appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL"),
                 observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])),
-                recommendation=face_res.get("recommendation", "")
+                recommendation=face_res.get("recommendation", ""),
+                provider=face_res.get("provider", "GaborLBP-512d-v1.2"),
+                quality_status=face_res.get("live_quality", {}).get("status", "GOOD"),
+                pad_status=face_res.get("presentation_attack", {}).get("status", "NOT_AVAILABLE"),
+                pad_reason=face_res.get("presentation_attack", {}).get("reason")
             )
             db.add(fr_rec)
             face_record = {
@@ -813,7 +827,12 @@ class ScreeningOrchestrator:
                 "verification_result": fr_rec.verification_result,
                 "appearance_level": fr_rec.appearance_level,
                 "observations": face_res.get("appearance_analysis", {}).get("observations", []),
-                "recommendation": fr_rec.recommendation
+                "recommendation": fr_rec.recommendation,
+                "provider": fr_rec.provider,
+                "quality_status": fr_rec.quality_status,
+                "quality_reasons": face_res.get("live_quality", {}).get("reasons", []),
+                "pad_status": fr_rec.pad_status,
+                "pad_reason": fr_rec.pad_reason
             }
 
         db.commit()
@@ -863,6 +882,7 @@ class ScreeningOrchestrator:
             "tamper_findings": tamper_records,
             "tamper_summary": tamper_res,
             "face_result": face_record,
+            "biometric_verification": face_res.get("biometric_verification") if face_res else None,
             "identity_matches": [],
             "risk_reasons": risk_res["reasons"],
             "signal_breakdown": risk_res["signal_breakdown"],

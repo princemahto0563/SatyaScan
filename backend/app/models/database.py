@@ -137,6 +137,10 @@ class FaceResult(Base):
     appearance_level = Column(String(20), default="MINIMAL")  # MINIMAL, MODERATE, SIGNIFICANT
     observations_json = Column(Text, nullable=True)
     recommendation = Column(Text, nullable=True)
+    provider = Column(String(50), nullable=True, default="GaborLBP-512d-v1.2")
+    quality_status = Column(String(30), nullable=True, default="GOOD")
+    pad_status = Column(String(30), nullable=True, default="NOT_AVAILABLE")
+    pad_reason = Column(Text, nullable=True)
 
     screening = relationship("Screening", back_populates="face_result")
 
@@ -250,6 +254,18 @@ def init_db():
                     conn.execute(text("ALTER TABLE extracted_fields ADD COLUMN ocr_engine VARCHAR(50)"))
                 if "validation" not in ef_cols:
                     conn.execute(text("ALTER TABLE extracted_fields ADD COLUMN validation VARCHAR(30) DEFAULT 'VALID'"))
+
+                # Migrate face_results table columns if missing
+                res_fr = conn.execute(text("PRAGMA table_info(face_results)")).fetchall()
+                fr_cols = {row[1] for row in res_fr}
+                if "provider" not in fr_cols:
+                    conn.execute(text("ALTER TABLE face_results ADD COLUMN provider VARCHAR(50) DEFAULT 'GaborLBP-512d-v1.2'"))
+                if "quality_status" not in fr_cols:
+                    conn.execute(text("ALTER TABLE face_results ADD COLUMN quality_status VARCHAR(30) DEFAULT 'GOOD'"))
+                if "pad_status" not in fr_cols:
+                    conn.execute(text("ALTER TABLE face_results ADD COLUMN pad_status VARCHAR(30) DEFAULT 'NOT_AVAILABLE'"))
+                if "pad_reason" not in fr_cols:
+                    conn.execute(text("ALTER TABLE face_results ADD COLUMN pad_reason TEXT"))
                 conn.commit()
             except Exception:
                 pass
