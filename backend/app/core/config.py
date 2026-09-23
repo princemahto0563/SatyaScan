@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # CORS Origin Whitelist (no wildcard with credentials)
     CORS_ALLOWED_ORIGINS: str = os.getenv(
         "CORS_ALLOWED_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000"
+        "https://satya-scan-phi.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
     )
 
     # In-memory Rate Limiting (per IP per minute)
@@ -58,7 +58,11 @@ class Settings(BaseSettings):
     
     @property
     def cors_origins_list(self) -> list[str]:
-        return [orig.strip() for orig in self.CORS_ALLOWED_ORIGINS.split(",") if orig.strip()]
+        origins = [orig.strip() for orig in self.CORS_ALLOWED_ORIGINS.split(",") if orig.strip()]
+        for req_orig in ("https://satya-scan-phi.vercel.app", "http://localhost:3000", "http://127.0.0.1:3000"):
+            if req_orig not in origins:
+                origins.append(req_orig)
+        return origins
 
     class Config:
         env_file = ".env"
