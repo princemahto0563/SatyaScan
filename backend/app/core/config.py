@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "SatyaScan"
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.0.1"
     API_V1_PREFIX: str = "/api/v1"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     

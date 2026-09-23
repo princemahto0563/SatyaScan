@@ -117,18 +117,27 @@ class FaceVerificationService:
         # Dedicated portrait photo check (e.g. pre-cropped passport / selfie image)
         if 0.55 <= (iw / ih) <= 1.25 and ih <= 400 and iw <= 400 and ih >= 80 and iw >= 80:
             if np.std(gray) > 20.0 and cv2.Laplacian(gray, cv2.CV_64F).var() > 20.0:
-                return [(int(iw * 0.05), int(ih * 0.05), int(iw * 0.90), int(ih * 0.90))]
+                fx = int(iw * 0.228)
+                fy = int(ih * 0.20)
+                fw = int(iw * 0.544)
+                fh = int(ih * 0.445)
+                return [(fx, fy, fw, fh)]
 
         # TD3 portrait zone fallback ONLY for wide passport document scans (Standard ICAO TD3 left quadrant)
         # NEVER apply to live selfies
         is_doc = is_document or (iw > ih * 1.2 and iw >= 500)
         if is_doc and iw > ih and iw >= 500:
             candidates = []
-            px1, py1 = int(iw * 0.03), int(ih * 0.14)
-            pw, ph = int(iw * 0.28), int(ih * 0.45)
+            # Standard ICAO TD3 photo window (left quadrant: x~5.5%, y~18.3%, w~20%, h~36.7%)
+            px1, py1 = int(iw * 0.055), int(ih * 0.183)
+            pw, ph = int(iw * 0.20), int(ih * 0.367)
             crop_zone = gray[py1:py1+ph, px1:px1+pw]
             if crop_zone.size > 0 and np.std(crop_zone) > 18.0 and cv2.Laplacian(crop_zone, cv2.CV_64F).var() > 25.0:
-                candidates.append((px1, py1, pw, ph))
+                fx = px1 + int(pw * 0.228)
+                fy = py1 + int(ph * 0.20)
+                fw = int(pw * 0.544)
+                fh = int(ph * 0.445)
+                candidates.append((fx, fy, fw, fh))
 
             # Also check ghost watermark zone on right
             gx1, gy1 = int(iw * 0.70), int(ih * 0.16)
