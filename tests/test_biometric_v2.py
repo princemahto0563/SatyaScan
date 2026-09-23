@@ -467,7 +467,7 @@ def test_S_reference_dataset_evaluation():
     """
     service = FaceVerificationService()
     doc_path = "data/genuine/case01_genuine_arjun.jpg"
-    selfie_path = "data/selfies/case01_selfie_arjun.jpg"
+    selfie_path = "data/selfies/case09_selfie_imposter.jpg"
 
     if os.path.exists(doc_path) and os.path.exists(selfie_path):
         res = service.verify(doc_path, selfie_path)
