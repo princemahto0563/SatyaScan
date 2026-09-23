@@ -86,19 +86,6 @@ export function CheckpointLoginView({ onLoginSuccess }: CheckpointLoginViewProps
 
   return (
     <div className="min-h-[85vh] flex flex-col items-center justify-center px-4 py-8">
-      {/* Disclaimer Banner */}
-      <div className="w-full max-w-4xl mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
-          <span>
-            <strong>EVALUATION / DEMO ENVIRONMENT:</strong> Prototype system created for Smart India Hackathon (SIH26188). Not for operational deployment.
-          </span>
-        </div>
-        <span className="font-mono text-[10px] bg-amber-200/50 dark:bg-amber-900/50 px-2 py-0.5 rounded font-semibold">
-          DEMO CREDENTIALS ONLY
-        </span>
-      </div>
-
       <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Login Card */}
         <div className="lg:col-span-7 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden">
