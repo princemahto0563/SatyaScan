@@ -165,19 +165,75 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
     return `${BACKEND_ROOT_URL}${path}`;
   };
 
-  // Helper for document metadata fields
-  const getFieldVal = (name: string) => {
-    const f = caseData.extracted_fields.find(
-      x => x.field_name.toLowerCase() === name.toLowerCase()
-    );
-    if (f) return f.visual_value || f.mrz_value || "—";
-    if (caseData.mrz_data) {
-      if (name === "full_name") return caseData.mrz_data.full_name || "—";
-      if (name === "document_number") return caseData.mrz_data.document_number || "—";
-      if (name === "date_of_birth") return caseData.mrz_data.date_of_birth || "—";
-      if (name === "date_of_expiry") return caseData.mrz_data.date_of_expiry || "—";
-      if (name === "nationality") return caseData.mrz_data.nationality || "—";
+  // Helper for document metadata fields with alias support and null checking
+  const getFieldVal = (canonicalName: string) => {
+    // 1. Special handling for Full Name
+    if (canonicalName === "full_name") {
+      if (caseData.extracted_fields && caseData.extracted_fields.length > 0) {
+        const fnMatch = caseData.extracted_fields.find(
+          x => x.field_name.toLowerCase() === "full_name" || x.field_name.toLowerCase() === "name"
+        );
+        const val = fnMatch?.visual_value || fnMatch?.mrz_value;
+        if (val && val !== "None" && val !== "null" && String(val).trim() !== "" && String(val).trim() !== "—") {
+          return String(val);
+        }
+        // Try combining surname + given names if available
+        const sMatch = caseData.extracted_fields.find(x => x.field_name.toLowerCase() === "surname");
+        const gMatch = caseData.extracted_fields.find(x => x.field_name.toLowerCase() === "given_names");
+        const sVal = sMatch?.visual_value || sMatch?.mrz_value || "";
+        const gVal = gMatch?.visual_value || gMatch?.mrz_value || "";
+        const combined = `${gVal} ${sVal}`.trim();
+        if (combined && combined !== "None" && combined !== "null" && combined !== "—") {
+          return combined;
+        }
+      }
+      if (caseData.mrz_data?.full_name) {
+        return String(caseData.mrz_data.full_name);
+      }
     }
+
+    const aliasMap: Record<string, string[]> = {
+      full_name: ["full_name", "name", "holder_name", "surname", "given_names"],
+      document_number: ["document_number", "passport_number", "doc_number", "document_no", "visa_number"],
+      date_of_birth: ["date_of_birth", "dob", "birth_date"],
+      date_of_expiry: ["date_of_expiry", "expiry_date", "expiry", "expiration_date"],
+      nationality: ["nationality", "country", "issuing_country", "country_code", "nat"],
+      sex: ["sex", "gender"],
+    };
+
+    const targetAliases = aliasMap[canonicalName] || [canonicalName];
+
+    // Check extracted fields
+    if (caseData.extracted_fields && caseData.extracted_fields.length > 0) {
+      for (const alias of targetAliases) {
+        const match = caseData.extracted_fields.find(
+          x => x.field_name.toLowerCase() === alias.toLowerCase()
+        );
+        if (match) {
+          const val = match.visual_value || match.mrz_value;
+          if (val && val !== "None" && val !== "null" && String(val).trim() !== "" && String(val).trim() !== "—") {
+            return String(val);
+          }
+        }
+      }
+    }
+
+    // Check parsed mrz_data
+    if (caseData.mrz_data) {
+      const mrz = caseData.mrz_data as Record<string, any>;
+      for (const alias of targetAliases) {
+        const mrzVal = mrz[alias];
+        if (mrzVal && mrzVal !== "None" && mrzVal !== "null" && String(mrzVal).trim() !== "") {
+          return String(mrzVal);
+        }
+      }
+    }
+
+    // Check masked_document_id if searching document_number
+    if (canonicalName === "document_number" && caseData.masked_document_id) {
+      return caseData.masked_document_id;
+    }
+
     return "—";
   };
 
@@ -452,10 +508,68 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
             {/* 1. DOCUMENT INFORMATION (5 cols) */}
             <div className="lg:col-span-5 space-y-4">
               <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3 border-b border-slate-100 dark:border-slate-800 pb-2">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                    1. Document Information
-                  </h3>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3 border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                      1. Document Information
+                    </h3>
+                    {(() => {
+                      const ocrSt = caseData.ocr_status || (
+                        caseData.extracted_fields && caseData.extracted_fields.length > 0
+                          ? (caseData.extracted_fields.some(f => f.visual_value) ? "SUCCESS" : "PARTIAL")
+                          : (caseData.mrz_data?.parsed ? "PARTIAL" : "FAILED")
+                      );
+                      const isSuccess = ocrSt === "SUCCESS";
+                      const isPartial = ocrSt === "PARTIAL";
+                      return (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
+                          isSuccess
+                            ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
+                            : isPartial
+                            ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                            : "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+                        }`} title={`OCR Engine: ${caseData.ocr_engine || "PaddleOCR + Tesseract"}`}>
+                          OCR: {ocrSt}
+                        </span>
+                      );
+                    })()}
+
+                    {/* MRZ Status Badge */}
+                    {caseData.mrz_data?.parsed ? (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
+                        caseData.mrz_data?.all_checks_passed
+                          ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
+                          : "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+                      }`} title="ICAO Doc 9303 7-3-1 Modulus 10 Check Digits">
+                        MRZ: {caseData.mrz_data?.all_checks_passed ? "7-3-1 PASS" : "CHECKSUM FAIL"}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                        MRZ: N/A
+                      </span>
+                    )}
+
+                    {/* VIZ ↔ MRZ Cross-Check Badge */}
+                    {(() => {
+                      const hasDiscrepancy = caseData.extracted_fields?.some(f => f.match_status === "MISMATCH");
+                      const hasMatch = caseData.extracted_fields?.some(f => f.match_status === "MATCH");
+                      if (hasDiscrepancy) {
+                        return (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800" title="Discrepancy between Visual Zone and MRZ record">
+                            VIZ↔MRZ: MISMATCH
+                          </span>
+                        );
+                      } else if (hasMatch) {
+                        return (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800" title="Visual Inspection Zone matches MRZ">
+                            VIZ↔MRZ: MATCH
+                          </span>
+                        );
+                      }
+                      return null;
+                    })()}
+                  </div>
+
                   <span className="font-mono text-[11px] rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-slate-700 dark:text-slate-300 font-semibold">
                     {caseData.document_type}
                   </span>
@@ -520,15 +634,34 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
                     2. Identity Verification
                   </h3>
-                  {caseData.face_result ? (
-                    <span className={`text-xs font-bold px-2.5 py-0.5 rounded-md border ${
-                      caseData.face_result.verification_result === "MATCH"
-                        ? "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700"
-                        : "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700"
-                    }`}>
-                      {caseData.face_result.verification_result === "MATCH" ? "MATCH" : "MISMATCH"}
-                    </span>
-                  ) : (
+                  {caseData.face_result ? (() => {
+                    const state = caseData.face_result.decision_state || caseData.face_result.verification_result;
+                    if (state === "VERIFIED MATCH" || state === "MATCH") {
+                      return (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-md border bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700">
+                          VERIFIED MATCH
+                        </span>
+                      );
+                    } else if (state === "VERIFIED MISMATCH" || state === "MISMATCH") {
+                      return (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-md border bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700">
+                          VERIFIED MISMATCH
+                        </span>
+                      );
+                    } else if (state === "INCONCLUSIVE" || state === "BORDERLINE") {
+                      return (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-md border bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700">
+                          INCONCLUSIVE (REVIEW)
+                        </span>
+                      );
+                    } else {
+                      return (
+                        <span className="text-xs font-bold px-2.5 py-0.5 rounded-md border bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-300 border-slate-300 dark:border-slate-700">
+                          INPUT FAILURE
+                        </span>
+                      );
+                    }
+                  })() : (
                     <span className="text-xs text-slate-500 font-medium">NO LIVE SELFIE</span>
                   )}
                 </div>
@@ -539,29 +672,29 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-2.5 text-center">
                         <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1.5">
-                          Document Photograph
+                          Document Portrait
                         </span>
                         <div className="h-32 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                          {caseData.doc_image_url ? (
+                          {caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url ? (
                             <img
-                              src={getFullImageUrl(caseData.doc_image_url)!}
-                              alt="Document Photo"
+                              src={getFullImageUrl(caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url)!}
+                              alt="Document Portrait"
                               className="h-full w-auto object-contain"
                             />
                           ) : (
-                            <span className="text-xs text-slate-400">Photo Unavailable</span>
+                            <span className="text-xs text-slate-400">Portrait Unavailable</span>
                           )}
                         </div>
                       </div>
 
                       <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 p-2.5 text-center">
                         <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1.5">
-                          Presented Face (Live Capture)
+                          Presented Face (Camera Capture)
                         </span>
                         <div className="h-32 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                          {caseData.live_image_url ? (
+                          {caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url ? (
                             <img
-                              src={getFullImageUrl(caseData.live_image_url)!}
+                              src={getFullImageUrl(caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url)!}
                               alt="Presented Face"
                               className="h-full w-auto object-contain"
                             />
@@ -573,41 +706,102 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     </div>
 
                     {/* Biometric Findings & Plain Language Explanation */}
-                    <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3 text-xs space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          Identity comparison: {caseData.face_result.verification_result === "MATCH" ? "MATCH" : caseData.face_result.verification_result}
-                        </span>
-                        <span className="text-slate-500 font-mono text-[11px]">
-                          Similarity: {caseData.face_result.similarity_score.toFixed(2)} (Threshold: {caseData.face_result.threshold || 0.65})
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-600 dark:text-slate-400">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-semibold">
-                          Provider: {caseData.face_result.provider || "GaborLBP-512d-v1.2"}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-semibold">
-                          Face Quality: {caseData.face_result.quality_status || "GOOD"}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-semibold">
-                          PAD: {caseData.face_result.pad_status || "NOT_AVAILABLE"} (Prototype)
-                        </span>
-                      </div>
-                      <p className="text-slate-700 dark:text-slate-300 text-[11px]">
-                        {caseData.face_result.verification_result === "MATCH"
-                          ? "Face similarity is consistent with the photograph on the document."
-                          : "Significant facial feature differences observed compared to document photograph."}
-                      </p>
-                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
-                        <span className="font-semibold text-slate-800 dark:text-slate-200">Appearance variation: </span>
-                        <span className="text-slate-700 dark:text-slate-300 font-medium capitalize">
-                          {caseData.face_result.appearance_level.toLowerCase()}
-                        </span>
-                        <p className="text-slate-600 dark:text-slate-400 mt-0.5">
-                          Officer note: {caseData.face_result.recommendation || "Facial similarity is consistent with the photograph on the document. Visible appearance variation may be associated with normal changes such as facial hair or lighting."}
-                        </p>
-                      </div>
-                    </div>
+                    {(() => {
+                      const state = caseData.face_result.decision_state || caseData.face_result.verification_result;
+                      const isMatch = state === "VERIFIED MATCH" || state === "MATCH";
+                      const isMismatch = state === "VERIFIED MISMATCH" || state === "MISMATCH";
+                      const isInconclusive = state === "INCONCLUSIVE" || state === "BORDERLINE";
+                      const isClassical = (caseData.face_result.provider || "").includes("GaborLBP");
+
+                      return (
+                        <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-3 text-xs space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold text-slate-900 dark:text-white">
+                              Decision State:{" "}
+                              <span
+                                className={
+                                  isMatch
+                                    ? "text-emerald-700 dark:text-emerald-400"
+                                    : isMismatch
+                                    ? "text-rose-700 dark:text-rose-400"
+                                    : isInconclusive
+                                    ? "text-amber-700 dark:text-amber-400"
+                                    : "text-slate-600 dark:text-slate-400"
+                                }
+                              >
+                                {state}
+                              </span>
+                            </span>
+                            <span className="text-slate-500 font-mono text-[11px]">
+                              Similarity: {caseData.face_result.similarity_score.toFixed(2)} (Thresh: {caseData.face_result.threshold || 0.65})
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-600 dark:text-slate-400">
+                            <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 font-semibold" title="Biometric Feature Provider">
+                              Provider: {caseData.face_result.provider || "SFace-ResNet-128d-v1.0"} ({caseData.face_result.provider_type || (isClassical ? "Classical Baseline" : "Neural Deep")})
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-semibold">
+                              Face Quality: {caseData.face_result.quality_status || "GOOD"}
+                            </span>
+                            <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 font-semibold" title="No presentation-attack detection enabled in this deployment">
+                              PAD: {caseData.face_result.pad_status || "NOT_AVAILABLE"} (Not Enabled)
+                            </span>
+                          </div>
+
+                          {/* Plain-Language Operational Guidance */}
+                          {isInconclusive ? (
+                            <div className="rounded-md bg-amber-50/90 dark:bg-amber-950/40 p-2.5 border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200">
+                              <div className="font-bold text-[11px] flex items-center gap-1.5">
+                                <span>⚠️ Mandatory Officer Visual Inspection Required</span>
+                              </div>
+                              <p className="mt-1 text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+                                {isClassical 
+                                  ? `Active classical baseline descriptor (${caseData.face_result.provider || "GaborLBP-512d-v1.2"}) lacks validated neural metric separation for automated clearance. Identity could not be reliably verified with the available biometric evidence.`
+                                  : `Biometric similarity (${caseData.face_result.similarity_score.toFixed(2)}) falls within the review band. Identity could not be reliably verified with the available biometric evidence. Secondary visual inspection required.`}
+                              </p>
+                            </div>
+                          ) : isMismatch ? (
+                            <div className="rounded-md bg-rose-50/90 dark:bg-rose-950/40 p-2.5 border border-rose-200 dark:border-rose-800/60 text-rose-900 dark:text-rose-200">
+                              <div className="font-bold text-[11px] flex items-center gap-1.5">
+                                <span>🛑 Biometric Discrepancy Detected</span>
+                              </div>
+                              <p className="mt-1 text-[11px] leading-relaxed text-rose-800 dark:text-rose-300">
+                                Presented face does not sufficiently correspond to the document portrait. Potential identity impersonation. Secondary screening hold recommended.
+                              </p>
+                            </div>
+                          ) : isMatch ? (
+                            <div className="rounded-md bg-emerald-50/90 dark:bg-emerald-950/40 p-2.5 border border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200">
+                              <div className="font-bold text-[11px] flex items-center gap-1.5">
+                                <span>✅ Verified Neural Biometric Match</span>
+                              </div>
+                              <p className="mt-1 text-[11px] leading-relaxed text-emerald-800 dark:text-emerald-300">
+                                Biometric evidence meets the validated verification criteria.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="rounded-md bg-slate-100 dark:bg-slate-800/60 p-2.5 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200">
+                              <div className="font-bold text-[11px] flex items-center gap-1.5">
+                                <span>ℹ️ Facial Input Quality Inadequate</span>
+                              </div>
+                              <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
+                                Facial landmarks could not be reliably extracted from the submitted image. Re-capture required.
+                              </p>
+                            </div>
+                          )}
+
+                          <div className="pt-2 border-t border-slate-200 dark:border-slate-800 text-[11px]">
+                            <span className="font-semibold text-slate-800 dark:text-slate-200">Appearance variation: </span>
+                            <span className="text-slate-700 dark:text-slate-300 font-medium capitalize">
+                              {caseData.face_result.appearance_level.toLowerCase()}
+                            </span>
+                            <p className="text-slate-600 dark:text-slate-400 mt-0.5">
+                              Officer note: {caseData.face_result.recommendation || "Biometric similarity is an advisory forensic signal, not a standalone legal clearance."}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-xs text-slate-500">
@@ -982,10 +1176,22 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             <span>Match</span>
                           </span>
-                        ) : (
+                        ) : field.match_status === "MISMATCH" ? (
                           <span className="inline-flex items-center space-x-1 text-rose-700 dark:text-rose-400 font-bold text-[11px]">
                             <XCircle className="h-3.5 w-3.5" />
                             <span>Discrepancy</span>
+                          </span>
+                        ) : field.match_status === "VIZ_ONLY" ? (
+                          <span className="inline-flex items-center space-x-1 text-slate-600 dark:text-slate-400 font-medium text-[11px]">
+                            <span>VIZ Only</span>
+                          </span>
+                        ) : field.match_status === "MRZ_ONLY" ? (
+                          <span className="inline-flex items-center space-x-1 text-teal-600 dark:text-teal-400 font-medium text-[11px]">
+                            <span>MRZ Only</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center space-x-1 text-slate-400 font-medium text-[11px]">
+                            <span>Not Present</span>
                           </span>
                         )}
                       </td>
@@ -1039,23 +1245,39 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 <div>
                   <span className="text-xs text-slate-500 uppercase font-mono">Biometric Facial Verification</span>
                   <div className="text-lg font-bold text-slate-900 dark:text-white flex items-center space-x-2">
-                    {caseData.face_result.verification_result === "MATCH" ? (
-                      <span className="text-emerald-700 dark:text-emerald-400">✓ Identity comparison: MATCH</span>
-                    ) : (
-                      <span className="text-rose-700 dark:text-rose-400">✗ Identity comparison: MISMATCH</span>
-                    )}
+                    {(() => {
+                      const state = caseData.face_result.decision_state || caseData.face_result.verification_result;
+                      if (state === "VERIFIED MATCH" || state === "MATCH") {
+                        return <span className="text-emerald-700 dark:text-emerald-400">✓ Biometric Decision: VERIFIED MATCH</span>;
+                      } else if (state === "VERIFIED MISMATCH" || state === "MISMATCH") {
+                        return <span className="text-rose-700 dark:text-rose-400">✗ Biometric Decision: VERIFIED MISMATCH</span>;
+                      } else if (state === "INCONCLUSIVE" || state === "BORDERLINE") {
+                        return <span className="text-amber-700 dark:text-amber-400">⚠ Biometric Decision: INCONCLUSIVE (REVIEW)</span>;
+                      } else {
+                        return <span className="text-slate-600 dark:text-slate-400">ℹ Biometric Decision: INPUT FAILURE</span>;
+                      }
+                    })()}
                   </div>
                   <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                    {caseData.face_result.verification_result === "MATCH"
-                      ? "Face similarity is consistent with the photograph on the document."
-                      : "Biometric distance exceeds acceptable matching threshold."}
+                    {(() => {
+                      const state = caseData.face_result.decision_state || caseData.face_result.verification_result;
+                      if (state === "INCONCLUSIVE" || state === "BORDERLINE") {
+                        return "Identity could not be reliably verified with the available biometric evidence. Mandatory officer visual inspection required.";
+                      } else if (state === "VERIFIED MISMATCH" || state === "MISMATCH") {
+                        return "Presented face does not sufficiently correspond to the document portrait.";
+                      } else if (state === "VERIFIED MATCH" || state === "MATCH") {
+                        return "Biometric evidence meets the validated verification criteria.";
+                      } else {
+                        return "Input image quality was insufficient for automated facial verification.";
+                      }
+                    })()}
                   </p>
                 </div>
 
                 <div className="text-left sm:text-right">
                   <span className="text-xs text-slate-500 uppercase font-mono">Biometric Provider</span>
                   <div className="text-sm font-bold font-mono text-slate-900 dark:text-white">
-                    {caseData.face_result.provider || "GaborLBP-512d-v1.2"}
+                    {caseData.face_result.provider || "SFace-ResNet-128d-v1.0"} ({caseData.face_result.provider_type || ((caseData.face_result.provider || "").includes("GaborLBP") ? "Classical Baseline" : "Neural Deep")})
                   </div>
                   <div className="text-base font-bold font-mono text-slate-900 dark:text-white mt-1">
                     Similarity: {caseData.face_result.similarity_score.toFixed(2)}
@@ -1064,7 +1286,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   <div className="text-[11px] text-slate-500 flex flex-wrap gap-2 justify-start sm:justify-end mt-1">
                     <span>Quality: <b>{caseData.face_result.quality_status || "GOOD"}</b></span>
                     <span>•</span>
-                    <span>PAD: <b>{caseData.face_result.pad_status || "NOT_AVAILABLE"} (Prototype)</b></span>
+                    <span>PAD: <b>{caseData.face_result.pad_status || "NOT_AVAILABLE"} (Not Enabled)</b></span>
                   </div>
                 </div>
               </div>
@@ -1073,30 +1295,30 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950/40 text-center">
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-2">
-                    Document Photograph
+                    Document Portrait
                   </span>
                   <div className="h-44 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                    {caseData.doc_image_url ? (
+                    {caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url ? (
                       <img
-                        src={getFullImageUrl(caseData.doc_image_url)!}
-                        alt="Document Photo"
+                        src={getFullImageUrl(caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url)!}
+                        alt="Document Portrait"
                         className="h-full w-auto object-contain"
                       />
                     ) : (
-                      <span className="text-xs text-slate-400">Document Image</span>
+                      <span className="text-xs text-slate-400">Portrait Unavailable</span>
                     )}
                   </div>
                 </div>
 
                 <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-3 bg-slate-50 dark:bg-slate-950/40 text-center">
                   <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 block mb-2">
-                    Presented Face (Webcam / Live)
+                    Presented Face (Camera Capture)
                   </span>
                   <div className="h-44 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                    {caseData.live_image_url ? (
+                    {caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url ? (
                       <img
-                        src={getFullImageUrl(caseData.live_image_url)!}
-                        alt="Live Face"
+                        src={getFullImageUrl(caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url)!}
+                        alt="Presented Face"
                         className="h-full w-auto object-contain"
                       />
                     ) : (
@@ -1611,7 +1833,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 </div>
                 <div className="text-xs text-slate-600 dark:text-slate-400 font-mono space-y-1">
                   <div>Haar Detector: <span className="text-emerald-600 font-bold">FACE_FOUND</span></div>
-                  <div>Descriptor: <span className="text-slate-700 dark:text-slate-300">512-D Gabor-LBP</span></div>
+                  <div>Descriptor: <span className="text-slate-700 dark:text-slate-300">{caseData.face_result?.provider || "SFace-ResNet-128d-v1.0"}</span></div>
                   <div>Cosine Sim: <span className="text-teal-600 font-bold font-mono">{personSameFace[0]?.similarity ?? "0.960"}</span></div>
                   <div>Result: <span className="text-emerald-600 font-bold">SAME_PERSON</span></div>
                 </div>

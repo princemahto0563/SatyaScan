@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 import jwt
 import bcrypt
+import base64
 import io
 import os
 import re
@@ -63,6 +64,20 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
     try:
+        if not token or not isinstance(token, str):
+            return None
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+
+        # Anti-Malleability & Signature Padding Validation:
+        # Reject non-canonical base64url signature encoding where unused padding bits have been altered.
+        sig_str = parts[2]
+        pad = "=" * ((4 - len(sig_str) % 4) % 4)
+        raw_sig = base64.urlsafe_b64decode(sig_str + pad)
+        if base64.urlsafe_b64encode(raw_sig).rstrip(b"=").decode("ascii") != sig_str:
+            return None
+
         # Strict Header Inspection: reject 'none', empty, or unexpected algorithms early
         unverified_header = jwt.get_unverified_header(token)
         header_alg = unverified_header.get("alg")

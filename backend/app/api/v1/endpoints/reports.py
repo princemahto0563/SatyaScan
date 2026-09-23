@@ -110,7 +110,13 @@ def download_screening_pdf(
             "similarity_score": face_res.similarity_score if face_res else 0.0,
             "threshold": face_res.threshold if face_res else 0.65,
             "verification_result": face_res.verification_result if face_res else "NOT_RUN",
-            "recommendation": face_res.recommendation if face_res else "No live selfie provided"
+            "decision_state": face_res.verification_result if face_res else "NOT_RUN",
+            "recommendation": face_res.recommendation if face_res else "No live selfie provided",
+            "provider": face_res.provider if face_res else "SFace-ResNet-128d-v1.0",
+            "quality_status": face_res.quality_status if face_res else "GOOD",
+            "pad_status": face_res.pad_status if face_res else "NOT_AVAILABLE",
+            "appearance_level": face_res.appearance_level if face_res else "MINIMAL",
+            "observations_json": face_res.observations_json if face_res else None
         } if face_res else None,
         "risk_reasons": [
             {

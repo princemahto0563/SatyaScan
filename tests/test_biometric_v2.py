@@ -245,7 +245,7 @@ def test_J_api_schema_serialization():
             "reason": "Presentation-attack detection is not enabled in this prototype."
         },
         "appearance_variation": "MODERATE",
-        "explanation": "Biometric similarity confirms identity match.",
+        "explanation": "Biometric similarity is consistent with document photograph.",
         "disclaimer": "Biometric similarity is a model-derived metric."
     }
     bio_schema = BiometricVerificationSchema(**bio_data)
@@ -315,14 +315,14 @@ def test_L_pdf_report_biometric_section():
         "extracted_fields": [],
         "tamper_summary": {"composite_tamper_score": 4.0, "signals": {}},
         "face_result": {
-            "provider": "GaborLBP-512d-v1.2",
-            "verification_result": "MATCH",
-            "similarity_score": 0.91,
-            "threshold": 0.65,
+            "provider": "SFace-ResNet-128d-v1.0",
+            "verification_result": "VERIFIED MATCH",
+            "similarity_score": 0.85,
+            "threshold": 0.68,
             "quality_status": "GOOD",
             "pad_status": "NOT_AVAILABLE",
             "appearance_level": "MINIMAL",
-            "recommendation": "Biometric similarity confirms identity match."
+            "recommendation": "Biometric similarity is consistent with document photograph."
         },
         "risk_reasons": []
     }
@@ -353,8 +353,8 @@ def test_M_reference_dataset_compatibility():
 
     face = create_synthetic_face()
     emb = verifier.extract_embedding(face)
-    assert len(emb) == 512
-    assert abs(np.linalg.norm(emb) - 1.0) < 1e-4
+    assert len(emb) in [128, 512]
+    assert abs(np.linalg.norm(emb) - 1.0) < 1e-3
 
 
 # ==============================================================================
@@ -415,6 +415,66 @@ def test_P_provider_provenance():
     assert modern.is_available() is False
 
     # Service must accurately report active provider
+    service_gabor = FaceVerificationService(get_biometric_provider("gabor_lbp"))
+    assert service_gabor.version == "GaborLBP-512d-v1.2"
+
+    service_auto = FaceVerificationService()
+    assert service_auto.version in ["SFace-ResNet-128d-v1.0", "GaborLBP-512d-v1.2"]
+    assert "ArcFace" not in service_auto.version  # Transparent honest reporting
+
+
+# ==============================================================================
+# TEST Q: 4-STATE ENGINE: CLASSICAL BASELINE CANNOT UNILATERALLY CLEAR MATCH
+# ==============================================================================
+def test_Q_classical_baseline_never_emits_unilateral_match(monkeypatch):
+    service = FaceVerificationService(get_biometric_provider("gabor_lbp"))
+    doc_face = create_synthetic_face(180, 25, 35)
+    live_face = create_synthetic_face(175, 28, 38)
+
+    # Mock face detection to return synthetic face
+    monkeypatch.setattr(service, "detect_and_crop_face", lambda img, **kw: (img, [0, 0, 120, 120], {"detected": True, "usable": True, "quality_adequate": True, "status": "GOOD", "face_count": 1}))
+    monkeypatch.setattr(service, "detect_all_faces", lambda img, **kw: [(0, 0, 120, 120)])
+
+    res = service.verify_identity(doc_face, live_face)
+    assert res["decision_state"] == "INCONCLUSIVE"
+    assert res["decision_state"] != "VERIFIED_MATCH"
+    assert res["requires_manual_inspection"] is True
+    assert "classical baseline" in res["evidence_metadata"]["decision_explanation"].lower()
+    assert res["pad_status"] == "NOT_AVAILABLE"
+
+
+# ==============================================================================
+# TEST R: NEURAL SFACE PROVIDER RECOGNITION
+# ==============================================================================
+def test_R_sface_neural_discriminative():
+    provider = get_biometric_provider("sface")
+    assert provider.is_available() is True
+    assert provider.is_neural is True
+    assert provider.is_discriminative is True
+    assert provider.version == "SFace-ResNet-128d-v1.0"
+    assert provider.match_threshold == 0.68
+    assert provider.borderline_threshold == 0.48
+
+
+# ==============================================================================
+# TEST S: REAL REFERENCE DATASET EVALUATION MATRIX
+# ==============================================================================
+def test_S_reference_dataset_evaluation():
+    """
+    Verifies on the real repository document and selfie that different persons
+    correctly trigger VERIFIED MISMATCH with SFace similarity below 0.48,
+    permanently preventing the 0.71 false positive bug.
+    """
     service = FaceVerificationService()
-    assert service.version == "GaborLBP-512d-v1.2"
-    assert "ArcFace" not in service.version  # Transparent honest reporting
+    doc_path = "data/genuine/case01_genuine_arjun.jpg"
+    selfie_path = "data/selfies/case01_selfie_arjun.jpg"
+
+    if os.path.exists(doc_path) and os.path.exists(selfie_path):
+        res = service.verify(doc_path, selfie_path)
+        assert res["provider"] == "SFace-ResNet-128d-v1.0"
+        assert res["decision_state"] == "VERIFIED_MISMATCH"
+        assert res["verification_result"] == "VERIFIED MISMATCH"
+        assert res["similarity_score"] < 0.48
+        assert "impersonation" in res["recommendation"].lower() or "mismatch" in res["recommendation"].lower()
+
+

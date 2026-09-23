@@ -57,6 +57,14 @@ class MultiIdentityIndexer:
         """
         # Ensure embedding is 2D float32 and unit-normalized
         emb = np.array(embedding, dtype=np.float32).reshape(1, -1)
+        if emb.shape[1] != self.embedding_dim:
+            if self.total_records == 0:
+                self.embedding_dim = emb.shape[1]
+                if FAISS_AVAILABLE and faiss is not None:
+                    self.index = faiss.IndexFlatIP(self.embedding_dim)
+            else:
+                return -1
+
         norm = np.linalg.norm(emb)
         if norm > 1e-6:
             emb = emb / norm
@@ -98,6 +106,13 @@ class MultiIdentityIndexer:
             }
 
         q = np.array(query_embedding, dtype=np.float32).reshape(1, -1)
+        if q.shape[1] != self.embedding_dim:
+            return {
+                "duplicate_detected": False,
+                "matches": [],
+                "alert": None,
+                "total_records_searched": 0
+            }
         norm = np.linalg.norm(q)
         if norm > 1e-6:
             q = q / norm

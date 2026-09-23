@@ -361,28 +361,36 @@ def get_screening_detail(
     reconstructed_biometric = None
     if face_res:
         obs = json.loads(face_res.observations_json) if face_res.observations_json else []
-        provider_val = getattr(face_res, "provider", None) or "GaborLBP-512d-v1.2"
+        provider_val = getattr(face_res, "provider", None) or "SFace-ResNet-128d-v1.0"
         quality_val = getattr(face_res, "quality_status", None) or "GOOD"
         pad_val = getattr(face_res, "pad_status", None) or "NOT_AVAILABLE"
-        pad_reason_val = getattr(face_res, "pad_reason", None) or "Presentation-attack detection is not enabled in this prototype."
+        pad_reason_val = getattr(face_res, "pad_reason", None) or "No presentation-attack detection is currently enabled."
+        is_neural = "sface" in provider_val.lower() or "arcface" in provider_val.lower() or "modern" in provider_val.lower()
+        provider_type = "DEEP_NEURAL" if is_neural else "CLASSICAL_BASELINE"
+        
         reconstructed_face = {
             "metric": face_res.metric,
             "similarity_score": face_res.similarity_score,
             "threshold": face_res.threshold,
             "verification_result": face_res.verification_result,
+            "decision_state": face_res.verification_result,
             "appearance_level": face_res.appearance_level,
             "observations": obs,
             "recommendation": face_res.recommendation,
             "provider": provider_val,
+            "provider_type": provider_type,
             "quality_status": quality_val,
             "pad_status": pad_val,
             "pad_reason": pad_reason_val
         }
         reconstructed_biometric = {
             "status": face_res.verification_result,
+            "decision_state": face_res.verification_result,
             "provider": provider_val,
+            "provider_type": provider_type,
             "similarity": face_res.similarity_score,
             "threshold": face_res.threshold,
+            "borderline_threshold": 0.48 if is_neural else 0.50,
             "quality": {
                 "status": quality_val,
                 "reasons": []
@@ -393,8 +401,38 @@ def get_screening_detail(
             },
             "appearance_variation": face_res.appearance_level,
             "explanation": face_res.recommendation or "",
-            "disclaimer": "Biometric similarity is a model-derived metric, not a certified identity probability."
+            "evidence_metadata": {
+                "provider_type": provider_type,
+                "metric": face_res.metric,
+                "similarity": face_res.similarity_score
+            },
+            "disclaimer": "Similarity score is a model-derived metric. It is not a calibrated probability that two images belong to the same person."
         }
+
+    # Reconstruct MRZ dictionary from fields for frontend consumers
+    reconstructed_mrz = {}
+    for f in fields:
+        if f.mrz_value:
+            fname = f.field_name.lower()
+            reconstructed_mrz[fname] = f.mrz_value
+            if fname in ["passport_number", "document_number"]:
+                reconstructed_mrz["document_number"] = f.mrz_value
+                reconstructed_mrz["passport_number"] = f.mrz_value
+            elif fname == "full_name":
+                reconstructed_mrz["full_name"] = f.mrz_value
+            elif fname == "date_of_birth":
+                reconstructed_mrz["date_of_birth"] = f.mrz_value
+            elif fname == "date_of_expiry":
+                reconstructed_mrz["date_of_expiry"] = f.mrz_value
+            elif fname == "nationality":
+                reconstructed_mrz["nationality"] = f.mrz_value
+            elif fname == "sex":
+                reconstructed_mrz["sex"] = f.mrz_value
+    if reconstructed_mrz:
+        reconstructed_mrz["parsed"] = True
+        reconstructed_mrz["all_checks_passed"] = not any(
+            vf.rule_id == "MRZ_CHECK_DIGITS_VALID" and vf.severity == "CRITICAL" for vf in val_findings
+        )
 
     return {
         "id": screening.id,
@@ -411,10 +449,12 @@ def get_screening_detail(
         "execution_latency_ms": screening.execution_latency_ms,
         "doc_image_url": f"/api/v1/screenings/media/{screening.id}/doc",
         "live_image_url": f"/api/v1/screenings/media/{screening.id}/live" if screening.live_image_path else None,
+        "doc_face_url": f"/api/v1/screenings/media/{screening.id}/doc_face" if os.path.exists(os.path.join(settings.STORAGE_DIR, f"{screening.id}_doc_face.jpg")) else None,
+        "live_face_url": f"/api/v1/screenings/media/{screening.id}/live_face" if os.path.exists(os.path.join(settings.STORAGE_DIR, f"{screening.id}_live_face.jpg")) else None,
         "ela_heatmap_url": f"/api/v1/screenings/media/{screening.id}/heatmap" if screening.ela_heatmap_path else None,
         "quality_assessment": {"verdict": "GOOD", "overall_score": 85.0},
         "extracted_fields": reconstructed_fields,
-        "mrz_data": None,
+        "mrz_data": reconstructed_mrz if reconstructed_mrz else None,
         "validation_findings": val_findings,
         "tamper_findings": tamper_findings,
         "tamper_summary": {
@@ -447,10 +487,11 @@ def get_screening_media(
     Replaces unsafe public static file mounts. Prevents directory traversal.
     """
     clean_id = validate_screening_id(screening_id)
-    if media_type not in ["doc", "live", "heatmap"]:
+    valid_media_types = ["doc", "document", "live", "heatmap", "doc_face", "live_face"]
+    if media_type not in valid_media_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid media type requested."
+            detail=f"Invalid media type requested. Allowed types: {', '.join(valid_media_types)}"
         )
 
     screening = db.query(Screening).filter(Screening.id == clean_id).first()
@@ -461,12 +502,20 @@ def get_screening_media(
     check_checkpoint_access(current_user, screening, db, resource_type="media_asset")
 
     file_path = None
-    if media_type == "doc":
+    if media_type in ["doc", "document"]:
         file_path = screening.doc_image_path
     elif media_type == "live":
         file_path = screening.live_image_path
     elif media_type == "heatmap":
         file_path = screening.ela_heatmap_path
+    elif media_type == "doc_face":
+        candidate_crop = os.path.join(settings.STORAGE_DIR, f"{clean_id}_doc_face.jpg")
+        if os.path.exists(candidate_crop):
+            file_path = candidate_crop
+    elif media_type == "live_face":
+        candidate_crop = os.path.join(settings.STORAGE_DIR, f"{clean_id}_live_face.jpg")
+        if os.path.exists(candidate_crop):
+            file_path = candidate_crop
 
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Media asset '{media_type}' not available.")

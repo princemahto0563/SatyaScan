@@ -4,10 +4,11 @@
 
 export interface ExtractedField {
   field_name: string;
+  field_value?: string | null;
   visual_value: string | null;
   mrz_value: string | null;
   confidence: number;
-  match_status: "MATCH" | "MISMATCH" | "NOT_PRESENT";
+  match_status: "MATCH" | "MISMATCH" | "NOT_PRESENT" | "MRZ_ONLY" | "VIZ_ONLY" | string;
   bounding_box?: number[][];
 }
 
@@ -35,8 +36,11 @@ export interface FaceResult {
   metric: string;
   similarity_score: number;
   threshold: number;
-  verification_result: "MATCH" | "BORDERLINE" | "MISMATCH" | "UNABLE_TO_VERIFY";
-  appearance_level: "MINIMAL" | "MODERATE" | "SIGNIFICANT";
+  verification_result: string;
+  decision_state?: string;
+  provider_type?: string;
+  evidence_metadata?: any;
+  appearance_level: "MINIMAL" | "MODERATE" | "SIGNIFICANT" | string;
   observations: string[];
   recommendation?: string;
   provider?: string;
@@ -44,16 +48,22 @@ export interface FaceResult {
   quality_reasons?: string[];
   pad_status?: string;
   pad_reason?: string;
-  disclaimer: string;
+  pad_note?: string;
+  doc_face_crop_url?: string;
+  live_face_crop_url?: string;
+  disclaimer?: string;
 }
 
 export interface BiometricVerification {
-  status: "MATCH" | "BORDERLINE" | "MISMATCH" | "UNABLE_TO_VERIFY";
+  status: string;
+  decision_state?: string;
   provider: string;
+  provider_type?: string;
   similarity: number;
   threshold: number;
+  borderline_threshold?: number;
   quality: {
-    status: "GOOD" | "ACCEPTABLE" | "POOR" | "UNABLE_TO_VERIFY";
+    status: "GOOD" | "ACCEPTABLE" | "POOR" | "UNABLE_TO_VERIFY" | string;
     reasons: string[];
     face_count?: number;
     sharpness?: number;
@@ -62,12 +72,13 @@ export interface BiometricVerification {
     face_size_ratio?: number;
   };
   presentation_attack: {
-    status: "PASS" | "REVIEW" | "FAIL" | "NOT_AVAILABLE";
+    status: "PASS" | "REVIEW" | "FAIL" | "NOT_AVAILABLE" | string;
     reason: string;
   };
-  appearance_variation: "MINIMAL" | "MODERATE" | "SIGNIFICANT";
+  appearance_variation: "MINIMAL" | "MODERATE" | "SIGNIFICANT" | string;
   explanation: string;
-  disclaimer: string;
+  evidence_metadata?: any;
+  disclaimer?: string;
 }
 
 export interface IdentityMatch {
@@ -99,8 +110,13 @@ export interface ScreeningDetail {
   risk_band: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   recommendation?: string;
   execution_latency_ms: number;
+  ocr_status?: "SUCCESS" | "PARTIAL" | "FAILED" | string;
+  ocr_engine?: string;
+  ocr_reason?: string;
   doc_image_url?: string;
   live_image_url?: string;
+  doc_face_url?: string;
+  live_face_url?: string;
   ela_heatmap_url?: string;
 
   quality_assessment: {

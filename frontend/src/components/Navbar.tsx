@@ -6,7 +6,7 @@ import {
   BarChart3, BookOpen, Sun, Moon, Wifi, WifiOff, Menu, X, Monitor,
   LogOut, MapPin, User
 } from "lucide-react";
-import { checkBackendHealth, HealthStatus } from "../lib/api";
+import { checkBackendHealth, HealthStatus, API_BASE_URL } from "../lib/api";
 import { UserSession } from "../lib/types";
 
 interface NavbarProps {
@@ -23,11 +23,17 @@ export function Navbar({ currentTab, onSelectTab, activeCaseId, session, onLogou
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isNetworkOnline, setIsNetworkOnline] = useState(true);
 
-  // Initialize theme state from DOM
+  // Initialize theme state from localStorage and DOM
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const hasDark = document.documentElement.classList.contains("dark");
+      const stored = localStorage.getItem("satyascan_theme");
+      const hasDark = stored ? stored === "dark" : document.documentElement.classList.contains("dark");
       setIsDark(hasDark);
+      if (hasDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
       setIsNetworkOnline(navigator.onLine);
 
       const handleOnline = () => setIsNetworkOnline(true);
@@ -189,49 +195,81 @@ export function Navbar({ currentTab, onSelectTab, activeCaseId, session, onLogou
           )}
 
           {/* Connectivity Status Badge */}
-          <div 
-            className="flex items-center space-x-1.5 rounded-md px-2 py-1 text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900"
-            title={
-              backendHealth?.online
-                ? !isNetworkOnline
-                  ? "Local screening service active on workstation · External internet disconnected (Air-Gapped)"
+          {(() => {
+            const isProduction = !API_BASE_URL.includes("localhost") && !API_BASE_URL.includes("127.0.0.1");
+            const modeLabel = !isNetworkOnline ? "Air-Gapped" : (isProduction ? "Connected · Production" : "Connected · Local");
+            const tooltip = backendHealth?.online
+              ? !isNetworkOnline
+                ? "Local screening service active on workstation · External internet disconnected (Air-Gapped)"
+                : isProduction
+                  ? `Connected to SatyaScan Production Backend (${API_BASE_URL})`
                   : "Connected to local screening service · Internet connection not required for core screening"
-                : "Screening service unavailable. Start the local screening backend to continue."
-            }
-          >
-            {backendHealth?.online ? (
-              <>
-                <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 hidden lg:inline">
-                  {!isNetworkOnline ? "Air-Gapped" : "Local Mode"}
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden 2xl:inline font-mono">
-                  ({backendHealth.latencyMs ? `${backendHealth.latencyMs}ms` : "local"})
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
-                <span className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
-                  Offline
-                </span>
-              </>
-            )}
-          </div>
+              : "Screening service unavailable. Verify backend deployment or check connection.";
 
-          {/* Theme Toggle Button */}
-          <button
-            onClick={toggleTheme}
-            className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-            title={isDark ? "Switch to Light Mode" : "Switch to Dark Mode"}
-            aria-label="Toggle theme"
+            return (
+              <div 
+                className="flex items-center space-x-1.5 rounded-md px-2 py-1 text-xs border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900"
+                title={tooltip}
+              >
+                {backendHealth?.online ? (
+                  <>
+                    <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                    <span className="text-[11px] font-medium text-slate-700 dark:text-slate-300 inline">
+                      {modeLabel}
+                    </span>
+                    <span className="text-[10px] text-slate-500 dark:text-slate-400 hidden lg:inline font-mono">
+                      ({backendHealth.latencyMs ? `${backendHealth.latencyMs}ms` : (isProduction ? "prod" : "local")})
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+                    <span className="text-[11px] font-medium text-rose-600 dark:text-rose-400">
+                      Offline
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Segmented Light / Dark Theme Switcher */}
+          <div 
+            className="flex items-center rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 p-0.5"
+            role="group"
+            aria-label="Theme switcher"
           >
-            {isDark ? (
-              <Sun className="h-4 w-4 text-amber-400" />
-            ) : (
-              <Moon className="h-4 w-4 text-slate-600" />
-            )}
-          </button>
+            <button
+              onClick={() => {
+                if (isDark) toggleTheme();
+              }}
+              className={`flex items-center space-x-1 rounded-md px-2 py-1 text-xs font-medium transition-all ${
+                !isDark
+                  ? "bg-white text-amber-600 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+              title="Switch to Light Mode"
+              aria-label="Light mode"
+            >
+              <Sun className="h-3.5 w-3.5 text-amber-500" />
+              <span className="hidden sm:inline text-[11px]">Light</span>
+            </button>
+            <button
+              onClick={() => {
+                if (!isDark) toggleTheme();
+              }}
+              className={`flex items-center space-x-1 rounded-md px-2 py-1 text-xs font-medium transition-all ${
+                isDark
+                  ? "bg-slate-800 text-teal-400 shadow-sm font-semibold"
+                  : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200"
+              }`}
+              title="Switch to Dark Mode"
+              aria-label="Dark mode"
+            >
+              <Moon className="h-3.5 w-3.5 text-teal-400" />
+              <span className="hidden sm:inline text-[11px]">Dark</span>
+            </button>
+          </div>
 
           {/* Logout Button */}
           {session && onLogout && (

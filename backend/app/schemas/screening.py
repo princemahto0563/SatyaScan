@@ -61,6 +61,7 @@ class CheckpointResponse(BaseModel):
 
 class ExtractedFieldSchema(BaseModel):
     field_name: str
+    field_value: Optional[str] = None
     visual_value: Optional[str] = None
     mrz_value: Optional[str] = None
     confidence: Optional[float] = None
@@ -98,7 +99,7 @@ class FaceResultSchema(BaseModel):
     appearance_level: str = "MINIMAL"
     observations: List[str] = []
     recommendation: Optional[str] = None
-    provider: Optional[str] = "GaborLBP-512d-v1.2"
+    provider: Optional[str] = "SFace-ResNet-128d-v1.0"
     quality_status: Optional[str] = None
     quality_reasons: List[str] = []
     pad_status: Optional[str] = "NOT_AVAILABLE"

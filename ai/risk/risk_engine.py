@@ -107,41 +107,51 @@ class RiskEngine:
 
         # 4. Face Verification Signal (0 - 100)
         face_score = 0.0
-        if face_res and face_res.get("verification_result"):
-            vres = face_res["verification_result"]
-            sim = face_res.get("similarity_score", 0.5)
-            if vres == "MISMATCH":
+        if face_res and (face_res.get("decision_state") or face_res.get("verification_result")):
+            dstate = (face_res.get("decision_state") or face_res.get("verification_result") or "").upper()
+            sim = float(face_res.get("similarity_score", 0.0) or 0.0)
+            if dstate in ["VERIFIED_MISMATCH", "VERIFIED MISMATCH", "MISMATCH"]:
                 face_score = 85.0
                 reasons.append({
                     "category": "BIOMETRIC",
                     "severity": "CRITICAL",
                     "points": round(face_score * self.weights["face_verification"], 1),
                     "summary": f"Biometric Mismatch (Similarity: {sim:.2f})",
-                    "detail": "Facial embedding similarity is significantly below verification threshold.",
+                    "detail": "Facial comparison indicates presented face diverges from document portrait.",
                     "action": "Secondary physical identity verification required."
                 })
-            elif vres == "BORDERLINE":
-                face_score = 40.0
+            elif dstate in ["INCONCLUSIVE", "BORDERLINE"]:
+                face_score = 35.0
                 reasons.append({
                     "category": "BIOMETRIC",
                     "severity": "MEDIUM",
                     "points": round(face_score * self.weights["face_verification"], 1),
-                    "summary": f"Biometric Review Recommended (Similarity: {sim:.2f})",
-                    "detail": "Biometric similarity is in review boundary. May be affected by lighting or angle.",
-                    "action": "Retake live photograph under neutral lighting."
+                    "summary": f"Biometric Inconclusive (Similarity: {sim:.2f})",
+                    "detail": "Biometric match cannot be reliably automated. Active descriptor lacks neural separation or falls in review band.",
+                    "action": "Mandatory visual officer inspection of passport photo against passenger."
                 })
-            elif vres == "MATCH":
+            elif dstate in ["INPUT_FAILURE", "UNABLE_TO_VERIFY"]:
+                face_score = 30.0
+                reasons.append({
+                    "category": "BIOMETRIC",
+                    "severity": "MEDIUM",
+                    "points": round(face_score * self.weights["face_verification"], 1),
+                    "summary": "Facial Capture Incomplete",
+                    "detail": face_res.get("reason", "Face could not be cropped or evaluated with adequate quality."),
+                    "action": "Ensure traveler is positioned under neutral illumination and retake image."
+                })
+            elif dstate in ["VERIFIED_MATCH", "VERIFIED MATCH", "MATCH"]:
                 face_score = 5.0
-                # Check if appearance difference exists
-                app_diff = face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL")
+                app_diff = face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL") if isinstance(face_res.get("appearance_analysis"), dict) else "MINIMAL"
                 if app_diff != "MINIMAL":
+                    observations = face_res.get("appearance_analysis", {}).get("observations", []) if isinstance(face_res.get("appearance_analysis"), dict) else []
                     reasons.append({
                         "category": "BIOMETRIC",
                         "severity": "INFO",
                         "points": 0.0,
                         "summary": f"Appearance Variation: {app_diff}",
-                        "detail": "; ".join(face_res.get("appearance_analysis", {}).get("observations", [])),
-                        "action": "Note appearance variation on record; biometric verification confirmed."
+                        "detail": "; ".join(observations),
+                        "action": "Note appearance variation on record; visual similarity consistent."
                     })
         signal_breakdown["face_verification"] = round(face_score, 1)
 

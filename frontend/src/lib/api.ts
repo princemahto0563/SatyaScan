@@ -7,7 +7,31 @@
 
 import { ScreeningDetail, ScreeningSummary, CheckpointInfo, UserSession, BlockchainAnchor, BlockchainVerificationResponse } from "./types";
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+const getBaseUrl = (): string => {
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    // If configured URL points to localhost but the browser is on a public remote host (e.g. Vercel), use production Render backend
+    if (
+      typeof window !== "undefined" &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1" &&
+      (process.env.NEXT_PUBLIC_API_URL.includes("localhost") || process.env.NEXT_PUBLIC_API_URL.includes("127.0.0.1"))
+    ) {
+      return "https://satyascan-backend.onrender.com/api/v1";
+    }
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  // If no env var is configured and running on a remote cloud deployment, automatically route to production Render API
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return "https://satyascan-backend.onrender.com/api/v1";
+  }
+  return "http://localhost:8000/api/v1";
+};
+
+export const API_BASE_URL = getBaseUrl();
 export const BACKEND_ROOT_URL = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
 
 const TIMEOUT_MS = 60000;

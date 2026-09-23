@@ -90,6 +90,10 @@ class ExtractedField(Base):
     match_status = Column(String(20), default="MATCH")  # MATCH, MISMATCH, NOT_PRESENT
     bounding_box_json = Column(Text, nullable=True)
 
+    @property
+    def field_value(self):
+        return self.visual_value or self.mrz_value
+
     screening = relationship("Screening", back_populates="fields")
 
 
@@ -137,7 +141,7 @@ class FaceResult(Base):
     appearance_level = Column(String(20), default="MINIMAL")  # MINIMAL, MODERATE, SIGNIFICANT
     observations_json = Column(Text, nullable=True)
     recommendation = Column(Text, nullable=True)
-    provider = Column(String(50), nullable=True, default="GaborLBP-512d-v1.2")
+    provider = Column(String(50), nullable=True, default="SFace-ResNet-128d-v1.0")
     quality_status = Column(String(30), nullable=True, default="GOOD")
     pad_status = Column(String(30), nullable=True, default="NOT_AVAILABLE")
     pad_reason = Column(Text, nullable=True)

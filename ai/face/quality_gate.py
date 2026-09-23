@@ -46,11 +46,14 @@ class FaceQualityGate:
     def assess_quality(
         self,
         img_bgr: np.ndarray,
-        detected_faces: List[Tuple[int, int, int, int]]
+        detected_faces: List[Tuple[int, int, int, int]],
+        is_document: bool = False
     ) -> Dict[str, Any]:
         """
         Assesses facial quality on image and detected face coordinates.
         detected_faces: list of [x, y, w, h] boxes.
+        is_document: True if evaluating a travel document scan (passports frequently have
+        a primary photo on the left and a secondary ghost/hologram portrait on the right).
         """
         if img_bgr is None or img_bgr.size == 0:
             return {
@@ -64,6 +67,8 @@ class FaceQualityGate:
                 "reasons": ["Image buffer is empty or corrupt."]
             }
 
+        ih, iw = img_bgr.shape[:2]
+        is_doc = is_document or (iw > ih * 1.2 and iw >= 500)
         face_count = len(detected_faces)
         reasons: List[str] = []
 
@@ -80,10 +85,23 @@ class FaceQualityGate:
             }
 
         if face_count > 1:
-            reasons.append(f"Multiple faces ({face_count}) detected in frame. Exactly one face must be presented.")
+            if is_doc:
+                # Travel documents often contain a primary portrait and a ghost/hologram portrait
+                reasons.append(f"Multiple facial regions ({face_count}) located in document (primary portrait and secondary/ghost watermark).")
+            else:
+                reasons.append(f"Multiple faces ({face_count}) detected in frame. Exactly one face must be presented.")
 
-        # Primary face (largest by area)
-        primary_face = max(detected_faces, key=lambda f: f[2] * f[3])
+        # Primary face: for documents, prefer faces in the left half if available, or largest
+        if is_doc and face_count > 1:
+            # Standard ICAO TD3 primary photo is situated in the left half (x < iw * 0.55)
+            left_faces = [f for f in detected_faces if (f[0] + f[2] / 2) < iw * 0.55]
+            if left_faces:
+                primary_face = max(left_faces, key=lambda f: f[2] * f[3])
+            else:
+                primary_face = max(detected_faces, key=lambda f: f[2] * f[3])
+        else:
+            primary_face = max(detected_faces, key=lambda f: f[2] * f[3])
+
         x, y, w, h = primary_face
         ih, iw = img_bgr.shape[:2]
 
@@ -120,7 +138,7 @@ class FaceQualityGate:
         is_poor = False
         is_acceptable = False
 
-        if face_count > 1:
+        if face_count > 1 and not is_doc:
             is_poor = True
 
         if w < self.MIN_FACE_WIDTH or h < self.MIN_FACE_HEIGHT:

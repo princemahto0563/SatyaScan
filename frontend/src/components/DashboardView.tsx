@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
 import { ScreeningSummary } from "../lib/types";
-import { getScreeningsList, getAnalytics } from "../lib/api";
+import { getScreeningsList, getAnalytics, API_BASE_URL } from "../lib/api";
 
 interface DashboardViewProps {
   onStartNewScreening: () => void;
@@ -169,9 +169,20 @@ export function DashboardView({ onStartNewScreening, onOpenCase }: DashboardView
             <span className="text-2xl font-bold text-slate-900 dark:text-slate-200 font-mono">
               {analytics?.summary?.average_latency_ms ?? 310} ms
             </span>
-            <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">Local Engine</span>
+            {(() => {
+              const isProd = !API_BASE_URL.includes("localhost") && !API_BASE_URL.includes("127.0.0.1");
+              return (
+                <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                  {isProd ? "Production Engine" : "Local Engine"}
+                </span>
+              );
+            })()}
           </div>
-          <p className="mt-1 text-[11px] text-slate-500">Fast local workstation execution speed</p>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {!API_BASE_URL.includes("localhost") && !API_BASE_URL.includes("127.0.0.1")
+              ? "Cloud containerized inference latency"
+              : "Fast local workstation execution speed"}
+          </p>
         </div>
       </div>
 

@@ -15,6 +15,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 import json
+import re
 import cv2
 import numpy as np
 import logging
@@ -53,14 +54,16 @@ class ScreeningOrchestrator:
         self.ocr_engine = OCREngine()
         self.tamper_pipeline = TamperForensicsPipeline()
         self.face_verifier = FaceVerifier()
-        self.identity_indexer = MultiIdentityIndexer()
+        dim = getattr(getattr(self.face_verifier, "provider", None), "embedding_dim", getattr(self.face_verifier, "EMBEDDING_DIM", 128))
+        self.identity_indexer = MultiIdentityIndexer(embedding_dim=dim)
         self.risk_engine = RiskEngine()
         self._seed_synthetic_gallery()
 
     def _seed_synthetic_gallery(self):
         """Seeds FAISS index with initial synthetic identities for duplicate detection."""
         rng = np.random.RandomState(42)
-        emb1 = rng.randn(512).astype(np.float32)
+        dim = self.identity_indexer.embedding_dim
+        emb1 = rng.randn(dim).astype(np.float32)
         emb1 /= np.linalg.norm(emb1)
         self.identity_indexer.add_identity(
             doc_id="DEMO-006",
@@ -70,7 +73,7 @@ class ScreeningOrchestrator:
             status="SUSPENDED"
         )
 
-        emb2 = rng.randn(512).astype(np.float32)
+        emb2 = rng.randn(dim).astype(np.float32)
         emb2 /= np.linalg.norm(emb2)
         self.identity_indexer.add_identity(
             doc_id="DEMO-WATCH-01",
@@ -351,20 +354,36 @@ class ScreeningOrchestrator:
 
         # 6. Face Verification
         face_res = None
+        doc_face_crop_path = None
+        live_face_crop_path = None
         if live_image_path and os.path.exists(live_image_path):
             face_res = self.face_verifier.verify(doc_image_path, live_image_path)
+            try:
+                os.makedirs(settings.STORAGE_DIR, exist_ok=True)
+                if face_res.get("doc_face_crop") is not None:
+                    p = os.path.join(settings.STORAGE_DIR, f"{screening_id}_doc_face.jpg")
+                    cv2.imwrite(p, face_res["doc_face_crop"])
+                    doc_face_crop_path = p
+                if face_res.get("live_face_crop") is not None:
+                    p = os.path.join(settings.STORAGE_DIR, f"{screening_id}_live_face.jpg")
+                    cv2.imwrite(p, face_res["live_face_crop"])
+                    live_face_crop_path = p
+            except Exception as e:
+                logger.warning(f"Failed to persist face crops for {screening_id}: {e}")
+
             AuditService.record_event(
                 db, screening_id, "FACE_VERIFICATION_COMPLETED",
                 {
                     "result": face_res.get("verification_result"),
                     "similarity": face_res.get("similarity_score"),
-                    "appearance": face_res.get("appearance_analysis", {}).get("appearance_difference_level")
+                    "provider": face_res.get("provider"),
+                    "appearance": face_res.get("appearance_analysis", {}).get("appearance_difference_level") if isinstance(face_res.get("appearance_analysis"), dict) else None
                 }
             )
 
         # 7. Duplicate / Multi-Identity Search
         dup_res = None
-        if face_res and face_res.get("doc_face_box") and face_res.get("verification_result") != "UNABLE_TO_VERIFY":
+        if face_res and face_res.get("doc_face_box") and face_res.get("verification_result") not in ["UNABLE_TO_VERIFY", "INPUT_FAILURE"]:
             live_img = cv2.imread(live_image_path)
             if live_img is not None:
                 live_cropped, _, _ = self.face_verifier.detect_and_crop_face(live_img)
@@ -429,37 +448,138 @@ class ScreeningOrchestrator:
         )
         db.add(screening_rec)
 
-        # Save Extracted Fields
-        field_records = []
-        for fname, val_dict in extracted_fields_dict.items():
-            if val_dict:
-                v_val = val_dict.get("value")
-                m_val = mrz_res.get(fname) if mrz_res.get("parsed") else None
-                status_val = "MATCH"
-                if m_val and v_val and str(v_val).upper() != str(m_val).upper():
-                    status_val = "MISMATCH"
+        # Save Extracted Fields (Consolidating Visual VIZ and ICAO MRZ sources)
+        def _match_canonical_field(f_name: str, val_v: Any, val_m: Any) -> bool:
+            if val_v is None or val_m is None:
+                return False
+            sv = str(val_v).strip().upper()
+            sm = str(val_m).strip().upper()
+            if sv == sm:
+                return True
+            if f_name in ["date_of_birth", "date_of_expiry"]:
+                nv = MRZParser._normalize_date_string(sv) or sv
+                nm = MRZParser._normalize_date_string(sm) or sm
+                return nv == nm
+            if f_name == "nationality":
+                if (sv in ["INDIAN", "IND"] and sm in ["INDIAN", "IND"]) or sv.startswith(sm) or sm.startswith(sv):
+                    return True
+            if f_name == "sex":
+                if (sv in ["M", "MALE"] and sm in ["M", "MALE"]) or (sv in ["F", "FEMALE"] and sm in ["F", "FEMALE"]):
+                    return True
+            if f_name == "full_name":
+                t_v = set(re.findall(r'[A-Z]+', sv))
+                t_m = set(re.findall(r'[A-Z]+', sm))
+                if t_v and t_m and (t_v == t_m or (len(t_v & t_m) / max(len(t_v), len(t_m)) >= 0.7)):
+                    return True
+            if f_name == "document_number":
+                cv = re.sub(r'[^A-Z0-9]', '', sv)
+                cm = re.sub(r'[^A-Z0-9]', '', sm)
+                return cv == cm
+            if f_name == "document_type":
+                if sv in ["PASSPORT", "P"] and sm in ["PASSPORT", "P"]:
+                    return True
+            return False
 
-                bbox = val_dict.get("bounding_box")
+        canonical_fields = ["document_number", "full_name", "date_of_birth", "nationality", "date_of_expiry", "sex", "document_type"]
+        field_records = []
+        handled_keys = set()
+
+        for fname in canonical_fields:
+            handled_keys.add(fname)
+            v_info = extracted_fields_dict.get(fname)
+            if not v_info and fname == "document_number":
+                v_info = extracted_fields_dict.get("passport_number")
+                handled_keys.add("passport_number")
+            elif not v_info and fname == "full_name":
+                s_name = extracted_fields_dict.get("surname", {}).get("value") if extracted_fields_dict.get("surname") else ""
+                g_name = extracted_fields_dict.get("given_names", {}).get("value") if extracted_fields_dict.get("given_names") else ""
+                if s_name or g_name:
+                    v_info = {"value": f"{g_name} {s_name}".strip(), "confidence": 0.85, "bounding_box": None}
+                    handled_keys.add("surname")
+                    handled_keys.add("given_names")
+            elif not v_info and fname == "date_of_birth":
+                v_info = extracted_fields_dict.get("dob")
+                handled_keys.add("dob")
+            elif not v_info and fname == "date_of_expiry":
+                v_info = extracted_fields_dict.get("expiry")
+                handled_keys.add("expiry")
+            elif not v_info and fname == "sex":
+                v_info = extracted_fields_dict.get("gender")
+                handled_keys.add("gender")
+
+            v_val = v_info.get("value") if (v_info and isinstance(v_info, dict)) else (v_info if isinstance(v_info, str) else None)
+
+            m_val = None
+            if mrz_res and mrz_res.get("parsed"):
+                m_val = mrz_res.get(fname)
+                if not m_val and fname == "document_number":
+                    m_val = mrz_res.get("document_number") or mrz_res.get("passport_number")
+                elif not m_val and fname == "document_type":
+                    m_val = mrz_res.get("document_code")
+
+            if v_val is not None or m_val is not None:
+                if v_val is not None and m_val is not None:
+                    is_match = _match_canonical_field(fname, v_val, m_val)
+                    status_val = "MATCH" if is_match else "MISMATCH"
+                elif m_val is not None:
+                    status_val = "MRZ_ONLY"
+                else:
+                    status_val = "VIZ_ONLY"
+
+                bbox = v_info.get("bounding_box") if (v_info and isinstance(v_info, dict)) else None
+                conf = v_info.get("confidence", 0.90) if (v_info and isinstance(v_info, dict)) else 0.95
+
                 f_rec = ExtractedField(
                     screening_id=screening_id,
                     field_name=fname,
                     visual_value=str(v_val) if v_val is not None else None,
                     mrz_value=str(m_val) if m_val is not None else None,
+                    confidence=float(conf) if conf is not None else 1.0,
+                    ocr_engine=actual_engine,
+                    validation="VALID" if status_val in ["MATCH", "MRZ_ONLY", "VIZ_ONLY"] else "INVALID",
+                    match_status=status_val,
+                    bounding_box_json=json.dumps(bbox) if bbox else None
+                )
+                db.add(f_rec)
+                canonical_val = str(v_val) if v_val is not None else (str(m_val) if m_val is not None else None)
+                field_records.append({
+                    "field_name": fname,
+                    "field_value": canonical_val,
+                    "visual_value": str(v_val) if v_val is not None else None,
+                    "mrz_value": str(m_val) if m_val is not None else None,
+                    "confidence": float(conf) if conf is not None else 1.0,
+                    "ocr_engine": actual_engine,
+                    "validation": f_rec.validation,
+                    "match_status": status_val,
+                    "bounding_box": bbox
+                })
+
+        # Also capture any remaining fields from visual OCR not in canonical set
+        for fname, val_dict in extracted_fields_dict.items():
+            if fname not in handled_keys and val_dict and val_dict.get("value"):
+                v_val = val_dict.get("value")
+                bbox = val_dict.get("bounding_box")
+                f_rec = ExtractedField(
+                    screening_id=screening_id,
+                    field_name=fname,
+                    visual_value=str(v_val) if v_val is not None else None,
+                    mrz_value=None,
                     confidence=val_dict.get("confidence", 1.0) or 1.0,
                     ocr_engine=actual_engine,
-                    validation="VALID" if status_val == "MATCH" else "INVALID",
-                    match_status=status_val,
+                    validation="VALID",
+                    match_status="VIZ_ONLY",
                     bounding_box_json=json.dumps(bbox) if bbox else None
                 )
                 db.add(f_rec)
                 field_records.append({
                     "field_name": fname,
+                    "field_value": str(v_val) if v_val is not None else None,
                     "visual_value": str(v_val) if v_val is not None else None,
-                    "mrz_value": str(m_val) if m_val is not None else None,
+                    "mrz_value": None,
                     "confidence": val_dict.get("confidence", 1.0) or 1.0,
                     "ocr_engine": actual_engine,
                     "validation": f_rec.validation,
-                    "match_status": status_val,
+                    "match_status": "VIZ_ONLY",
                     "bounding_box": bbox
                 })
 
@@ -499,20 +619,21 @@ class ScreeningOrchestrator:
             tamper_records.append(tf)
 
         face_record = None
-        if face_res and face_res.get("verification_result") != "UNABLE_TO_VERIFY":
+        if face_res:
+            vr = face_res.get("verification_result", "UNABLE_TO_VERIFY")
             fr_rec = FaceResult(
                 screening_id=screening_id,
                 metric=face_res.get("metric", "Cosine Similarity"),
-                similarity_score=face_res.get("similarity_score", 0.0),
-                threshold=face_res.get("threshold", 0.65),
-                verification_result=face_res.get("verification_result", "MATCH"),
-                appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL"),
-                observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])),
-                recommendation=face_res.get("recommendation", ""),
-                provider=face_res.get("provider", "GaborLBP-512d-v1.2"),
-                quality_status=face_res.get("live_quality", {}).get("status", "GOOD"),
-                pad_status=face_res.get("presentation_attack", {}).get("status", "NOT_AVAILABLE"),
-                pad_reason=face_res.get("presentation_attack", {}).get("reason")
+                similarity_score=float(face_res.get("similarity_score", 0.0) or 0.0),
+                threshold=float(face_res.get("threshold", 0.68) or 0.68),
+                verification_result=vr,
+                appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL") if isinstance(face_res.get("appearance_analysis"), dict) else "MINIMAL",
+                observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])) if isinstance(face_res.get("appearance_analysis"), dict) else "[]",
+                recommendation=face_res.get("recommendation", "") or face_res.get("reason", ""),
+                provider=face_res.get("provider", "SFace-ResNet-128d-v1.0"),
+                quality_status=face_res.get("live_quality", {}).get("status", "GOOD") if isinstance(face_res.get("live_quality"), dict) else "GOOD",
+                pad_status=face_res.get("presentation_attack", {}).get("status", "NOT_AVAILABLE") if isinstance(face_res.get("presentation_attack"), dict) else "NOT_AVAILABLE",
+                pad_reason=face_res.get("presentation_attack", {}).get("reason") if isinstance(face_res.get("presentation_attack"), dict) else None
             )
             db.add(fr_rec)
             face_record = {
@@ -520,14 +641,19 @@ class ScreeningOrchestrator:
                 "similarity_score": fr_rec.similarity_score,
                 "threshold": fr_rec.threshold,
                 "verification_result": fr_rec.verification_result,
+                "decision_state": face_res.get("decision_state", "INCONCLUSIVE"),
                 "appearance_level": fr_rec.appearance_level,
-                "observations": face_res.get("appearance_analysis", {}).get("observations", []),
+                "observations": face_res.get("appearance_analysis", {}).get("observations", []) if isinstance(face_res.get("appearance_analysis"), dict) else [],
                 "recommendation": fr_rec.recommendation,
                 "provider": fr_rec.provider,
+                "provider_type": face_res.get("provider_type", "DEEP_NEURAL"),
                 "quality_status": fr_rec.quality_status,
-                "quality_reasons": face_res.get("live_quality", {}).get("reasons", []),
+                "quality_reasons": face_res.get("live_quality", {}).get("reasons", []) if isinstance(face_res.get("live_quality"), dict) else [],
                 "pad_status": fr_rec.pad_status,
-                "pad_reason": fr_rec.pad_reason
+                "pad_reason": fr_rec.pad_reason,
+                "doc_face_crop_url": f"/api/v1/screenings/media/{screening_id}/doc_face" if doc_face_crop_path else None,
+                "live_face_crop_url": f"/api/v1/screenings/media/{screening_id}/live_face" if live_face_crop_path else None,
+                "evidence_metadata": face_res.get("evidence_metadata", {})
             }
 
         identity_records = []
@@ -584,10 +710,14 @@ class ScreeningOrchestrator:
             "risk_score": risk_res["risk_score"],
             "risk_band": risk_res["risk_band"],
             "recommendation": screening_rec.recommendation,
+            "ocr_status": ocr_res.get("ocr_status", "SUCCESS" if field_records else "FAILED"),
             "ocr_engine": actual_engine,
+            "ocr_reason": ocr_res.get("ocr_reason", ""),
             "execution_latency_ms": latency_ms,
             "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
             "live_image_url": f"/api/v1/screenings/media/{screening_id}/live" if live_image_path else None,
+            "doc_face_url": f"/api/v1/screenings/media/{screening_id}/doc_face" if doc_face_crop_path else None,
+            "live_face_url": f"/api/v1/screenings/media/{screening_id}/live_face" if live_face_crop_path else None,
             "ela_heatmap_url": f"/api/v1/screenings/media/{screening_id}/heatmap" if tamper_res.get("heatmap_path") else None,
             "quality_assessment": quality_res,
             "extracted_fields": field_records,
@@ -680,13 +810,29 @@ class ScreeningOrchestrator:
 
         # 5. Face Verification (if portrait detected on visa vignette)
         face_res = None
+        doc_face_crop_path = None
+        live_face_crop_path = None
         if live_image_path and os.path.exists(live_image_path):
             face_res = self.face_verifier.verify(doc_image_path, live_image_path)
+            try:
+                os.makedirs(settings.STORAGE_DIR, exist_ok=True)
+                if face_res.get("doc_face_crop") is not None:
+                    p = os.path.join(settings.STORAGE_DIR, f"{screening_id}_doc_face.jpg")
+                    cv2.imwrite(p, face_res["doc_face_crop"])
+                    doc_face_crop_path = p
+                if face_res.get("live_face_crop") is not None:
+                    p = os.path.join(settings.STORAGE_DIR, f"{screening_id}_live_face.jpg")
+                    cv2.imwrite(p, face_res["live_face_crop"])
+                    live_face_crop_path = p
+            except Exception as e:
+                logger.warning(f"Failed to persist face crops for {screening_id}: {e}")
+
             AuditService.record_event(
                 db, screening_id, "FACE_VERIFICATION_COMPLETED",
                 {
                     "result": face_res.get("verification_result"),
-                    "similarity": face_res.get("similarity_score")
+                    "similarity": face_res.get("similarity_score"),
+                    "provider": face_res.get("provider")
                 }
             )
 
@@ -760,6 +906,7 @@ class ScreeningOrchestrator:
             db.add(f_rec)
             field_records.append({
                 "field_name": fname,
+                "field_value": str(v_val) if v_val is not None else None,
                 "visual_value": str(v_val) if v_val is not None else None,
                 "mrz_value": None,
                 "confidence": val_dict.get("confidence") or 1.0,
@@ -804,20 +951,21 @@ class ScreeningOrchestrator:
             tamper_records.append(tf)
 
         face_record = None
-        if face_res and face_res.get("verification_result") != "UNABLE_TO_VERIFY":
+        if face_res:
+            vr = face_res.get("verification_result", "UNABLE_TO_VERIFY")
             fr_rec = FaceResult(
                 screening_id=screening_id,
                 metric=face_res.get("metric", "Cosine Similarity"),
-                similarity_score=face_res.get("similarity_score", 0.0),
-                threshold=face_res.get("threshold", 0.65),
-                verification_result=face_res.get("verification_result", "MATCH"),
-                appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL"),
-                observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])),
-                recommendation=face_res.get("recommendation", ""),
-                provider=face_res.get("provider", "GaborLBP-512d-v1.2"),
-                quality_status=face_res.get("live_quality", {}).get("status", "GOOD"),
-                pad_status=face_res.get("presentation_attack", {}).get("status", "NOT_AVAILABLE"),
-                pad_reason=face_res.get("presentation_attack", {}).get("reason")
+                similarity_score=float(face_res.get("similarity_score", 0.0) or 0.0),
+                threshold=float(face_res.get("threshold", 0.68) or 0.68),
+                verification_result=vr,
+                appearance_level=face_res.get("appearance_analysis", {}).get("appearance_difference_level", "MINIMAL") if isinstance(face_res.get("appearance_analysis"), dict) else "MINIMAL",
+                observations_json=json.dumps(face_res.get("appearance_analysis", {}).get("observations", [])) if isinstance(face_res.get("appearance_analysis"), dict) else "[]",
+                recommendation=face_res.get("recommendation", "") or face_res.get("reason", ""),
+                provider=face_res.get("provider", "SFace-ResNet-128d-v1.0"),
+                quality_status=face_res.get("live_quality", {}).get("status", "GOOD") if isinstance(face_res.get("live_quality"), dict) else "GOOD",
+                pad_status=face_res.get("presentation_attack", {}).get("status", "NOT_AVAILABLE") if isinstance(face_res.get("presentation_attack"), dict) else "NOT_AVAILABLE",
+                pad_reason=face_res.get("presentation_attack", {}).get("reason") if isinstance(face_res.get("presentation_attack"), dict) else None
             )
             db.add(fr_rec)
             face_record = {
@@ -825,14 +973,19 @@ class ScreeningOrchestrator:
                 "similarity_score": fr_rec.similarity_score,
                 "threshold": fr_rec.threshold,
                 "verification_result": fr_rec.verification_result,
+                "decision_state": face_res.get("decision_state", "INCONCLUSIVE"),
                 "appearance_level": fr_rec.appearance_level,
-                "observations": face_res.get("appearance_analysis", {}).get("observations", []),
+                "observations": face_res.get("appearance_analysis", {}).get("observations", []) if isinstance(face_res.get("appearance_analysis"), dict) else [],
                 "recommendation": fr_rec.recommendation,
                 "provider": fr_rec.provider,
+                "provider_type": face_res.get("provider_type", "DEEP_NEURAL"),
                 "quality_status": fr_rec.quality_status,
-                "quality_reasons": face_res.get("live_quality", {}).get("reasons", []),
+                "quality_reasons": face_res.get("live_quality", {}).get("reasons", []) if isinstance(face_res.get("live_quality"), dict) else [],
                 "pad_status": fr_rec.pad_status,
-                "pad_reason": fr_rec.pad_reason
+                "pad_reason": fr_rec.pad_reason,
+                "doc_face_crop_url": f"/api/v1/screenings/media/{screening_id}/doc_face" if doc_face_crop_path else None,
+                "live_face_crop_url": f"/api/v1/screenings/media/{screening_id}/live_face" if live_face_crop_path else None,
+                "evidence_metadata": face_res.get("evidence_metadata", {})
             }
 
         db.commit()
@@ -870,10 +1023,14 @@ class ScreeningOrchestrator:
             "risk_score": risk_res["risk_score"],
             "risk_band": risk_res["risk_band"],
             "recommendation": screening_rec.recommendation,
+            "ocr_status": ocr_res.get("ocr_status", "SUCCESS" if field_records else "FAILED"),
             "ocr_engine": actual_engine,
+            "ocr_reason": ocr_res.get("ocr_reason", ""),
             "execution_latency_ms": latency_ms,
             "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
             "live_image_url": f"/api/v1/screenings/media/{screening_id}/live" if live_image_path else None,
+            "doc_face_url": f"/api/v1/screenings/media/{screening_id}/doc_face" if doc_face_crop_path else None,
+            "live_face_url": f"/api/v1/screenings/media/{screening_id}/live_face" if live_face_crop_path else None,
             "ela_heatmap_url": f"/api/v1/screenings/media/{screening_id}/heatmap" if tamper_res.get("heatmap_path") else None,
             "quality_assessment": quality_res,
             "extracted_fields": field_records,

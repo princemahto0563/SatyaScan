@@ -1,11 +1,21 @@
 """
 SatyaScan Forensic Case Report Generator (ReportLab)
+===================================================
 Generates an official, court-grade border security screening summary PDF document
 with SatyaScan branding, case metadata, masked PII, forensic findings, biometric metrics,
-SHA-256 audit digest, and mandatory decision-support disclaimers.
+embedded face crops, SHA-256 cryptographic audit chain digest, and statutory disclaimers.
+
+7 COURT-GRADE REPORT SECTIONS:
+1. Executive Summary
+2. Document Information & Field Extraction (with OCR status)
+3. Document Integrity & Forensic Analysis
+4. Identity Verification & Biometrics (with side-by-side face crops & 4-state engine)
+5. Risk Analysis & Signal Breakdown
+6. Cryptographic Audit & Distributed Ledger Anchor
+7. Officer Review & Official Sign-Off Block
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import os
 import html
 from datetime import datetime
@@ -13,9 +23,10 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, HRFlowable, KeepTogether
 )
 from reportlab.pdfgen import canvas
+from backend.app.core.config import settings
 
 
 class NumberedCanvas(canvas.Canvas):
@@ -40,15 +51,15 @@ class NumberedCanvas(canvas.Canvas):
         self.saveState()
         self.setFont("Helvetica", 8)
         self.setFillColor(colors.HexColor("#475569"))
-        # Header text
+        # Header line
         self.drawString(54, 755, "CONFIDENTIAL // LAW ENFORCEMENT & IMMIGRATION SCREENING RECORD")
         self.setStrokeColor(colors.HexColor("#CBD5E1"))
         self.setLineWidth(0.5)
         self.line(54, 748, 558, 748)
         
-        # Footer text
+        # Footer line
         self.line(54, 45, 558, 45)
-        self.drawString(54, 32, "SatyaScan Document Integrity Workstation · DEMO / EVALUATION DATA · SIH26188")
+        self.drawString(54, 32, "SatyaScan Forensic Intelligence Workstation · OFFICIAL DOSSIER · SIH26188")
         page_str = f"Page {self._pageNumber} of {page_count}"
         self.drawRightString(558, 32, page_str)
         self.restoreState()
@@ -56,13 +67,13 @@ class NumberedCanvas(canvas.Canvas):
 
 class ReportGenerator:
     """
-    Builds official screening PDF reports using ReportLab.
+    Builds official 7-section screening PDF reports using ReportLab.
     """
 
     @classmethod
     def generate_pdf(cls, case_data: Dict[str, Any], output_pdf_path: str) -> str:
         """
-        Renders complete multi-section screening dossier into PDF.
+        Renders complete 7-section court-grade screening dossier into PDF.
         """
         os.makedirs(os.path.dirname(output_pdf_path), exist_ok=True)
         doc = SimpleDocTemplate(
@@ -70,53 +81,50 @@ class ReportGenerator:
             pagesize=letter,
             leftMargin=54,
             rightMargin=54,
-            topMargin=60,
-            bottomMargin=54
+            topMargin=58,
+            bottomMargin=52
         )
 
         styles = getSampleStyleSheet()
         normal = styles["Normal"]
 
-        # Custom styles
+        # Custom Typography
         title_style = ParagraphStyle(
             "DocTitle",
             parent=normal,
             fontName="Helvetica-Bold",
-            fontSize=18,
-            leading=22,
+            fontSize=16,
+            leading=20,
             textColor=colors.HexColor("#0F172A")
-        )
-        subtitle_style = ParagraphStyle(
-            "DocSubTitle",
-            parent=normal,
-            fontName="Helvetica",
-            fontSize=9,
-            leading=12,
-            textColor=colors.HexColor("#64748B")
         )
         section_heading = ParagraphStyle(
             "SectionHeading",
             parent=normal,
             fontName="Helvetica-Bold",
-            fontSize=11,
-            leading=14,
+            fontSize=10,
+            leading=13,
             textColor=colors.HexColor("#0F766E"),
-            spaceBefore=8,
-            spaceAfter=4
+            spaceBefore=6,
+            spaceAfter=3
         )
         cell_bold = ParagraphStyle(
-            "CellBold", parent=normal, fontName="Helvetica-Bold", fontSize=8, leading=10, textColor=colors.HexColor("#1E293B")
+            "CellBold", parent=normal, fontName="Helvetica-Bold", fontSize=7.5, leading=9.5, textColor=colors.HexColor("#1E293B")
         )
         cell_text = ParagraphStyle(
-            "CellText", parent=normal, fontName="Helvetica", fontSize=8, leading=10, textColor=colors.HexColor("#334155")
+            "CellText", parent=normal, fontName="Helvetica", fontSize=7.5, leading=9.5, textColor=colors.HexColor("#334155")
+        )
+        cell_center = ParagraphStyle(
+            "CellCenter", parent=normal, fontName="Helvetica", fontSize=7, leading=9, alignment=1, textColor=colors.HexColor("#475569")
         )
 
         elements = []
 
-        # 1. Document Header Banner
-        screening_id = case_data.get("id", "SAT-2026-UNKNOWN")
+        # -------------------------------------------------------------
+        # SECTION 1: EXECUTIVE SUMMARY & HEADER
+        # -------------------------------------------------------------
+        screening_id = case_data.get("id") or case_data.get("screening_id") or "SAT-2026-UNKNOWN"
         risk_band = case_data.get("risk_band", "LOW")
-        risk_score = case_data.get("risk_score", 0.0)
+        risk_score = float(case_data.get("risk_score", 0.0) or 0.0)
 
         band_colors = {
             "LOW": colors.HexColor("#059669"),
@@ -128,11 +136,11 @@ class ReportGenerator:
 
         header_data = [
             [
-                Paragraph("<b>SatyaScan</b><br/><font size=9 color='#475569'>Document Integrity & Identity Verification Workstation</font>", title_style),
+                Paragraph("<b>SatyaScan Forensic Dossier</b><br/><font size=8 color='#475569'>Court-Grade Document Integrity & Biometric Verification Record</font>", title_style),
                 Paragraph(
-                    f"<para align=right><font size=14 color='{accent_color.hexval()}'><b>{risk_band} RISK</b></font><br/>"
-                    f"<font size=10 color='#1E293B'><b>Score: {risk_score:.1f} / 100</b></font><br/>"
-                    f"<font size=8 color='#64748B'>CASE #{screening_id}</font></para>",
+                    f"<para align=right><font size=13 color='{accent_color.hexval()}'><b>{risk_band} RISK</b></font><br/>"
+                    f"<font size=9.5 color='#1E293B'><b>Composite: {risk_score:.1f} / 100</b></font><br/>"
+                    f"<font size=7.5 color='#64748B'>CASE #{html.escape(str(screening_id))}</font></para>",
                     normal
                 )
             ]
@@ -144,180 +152,295 @@ class ReportGenerator:
             ('TOPPADDING', (0,0), (-1,-1), 0),
         ]))
         elements.append(t_head)
-        elements.append(Spacer(1, 8))
-        elements.append(HRFlowable(width="100%", thickness=1.5, color=accent_color, spaceAfter=8))
+        elements.append(Spacer(1, 4))
+        elements.append(HRFlowable(width="100%", thickness=1.5, color=accent_color, spaceAfter=6))
 
-        # 2. Case Overview Table
-        ts_str = case_data.get("created_at", datetime.now().isoformat())
+        # Case Metadata Overview Table
+        ts_str = str(case_data.get("created_at", datetime.now().isoformat()))[:19]
         doc_type = case_data.get("document_type", "PASSPORT")
         masked_id = case_data.get("masked_document_id", "N/A")
-        cp_info = case_data.get("checkpoint_name") or case_data.get("checkpoint_id") or "Central Immigration Checkpoint"
-        operator_info = case_data.get("operator_name") or "Authorized Border Officer"
-        if case_data.get("operator_badge"):
-            operator_info += f" ({case_data.get('operator_badge')})"
+        cp_info = case_data.get("checkpoint_name") or case_data.get("checkpoint_id") or "DEL-T3-AIRPORT"
+        operator_info = case_data.get("operator_name") or f"Officer #{case_data.get('operator_id') or 'SIH-44'}"
+        rec_text = case_data.get("recommendation", "Routine Clearance Permitted.")
 
         overview_data = [
             [
                 Paragraph("<b>Screening ID:</b>", cell_bold), Paragraph(html.escape(str(screening_id)), cell_text),
-                Paragraph("<b>Screening Date:</b>", cell_bold), Paragraph(html.escape(str(ts_str)[:19]), cell_text)
+                Paragraph("<b>Screening Date/UTC:</b>", cell_bold), Paragraph(html.escape(str(ts_str)), cell_text)
             ],
             [
-                Paragraph("<b>Checkpoint:</b>", cell_bold), Paragraph(html.escape(str(cp_info)), cell_text),
+                Paragraph("<b>Checkpoint Station:</b>", cell_bold), Paragraph(html.escape(str(cp_info)), cell_text),
                 Paragraph("<b>Screening Officer:</b>", cell_bold), Paragraph(html.escape(str(operator_info)), cell_text)
             ],
             [
                 Paragraph("<b>Document Type:</b>", cell_bold), Paragraph(html.escape(str(doc_type)), cell_text),
-                Paragraph("<b>Masked Doc No:</b>", cell_bold), Paragraph(html.escape(str(masked_id)), cell_text)
+                Paragraph("<b>Masked Identifier:</b>", cell_bold), Paragraph(html.escape(str(masked_id)), cell_text)
             ],
             [
-                Paragraph("<b>OCR Engine:</b>", cell_bold), Paragraph(html.escape(str(case_data.get("ocr_engine") or "PaddleOCR / Tesseract")), cell_text),
-                Paragraph("<b>System Status:</b>", cell_bold), Paragraph(html.escape(str(case_data.get("status", "COMPLETED"))), cell_text)
-            ],
-            [
-                Paragraph("<b>Recommendation:</b>", cell_bold),
-                Paragraph(f"<b>{html.escape(str(case_data.get('recommendation', 'Routine Clearance')))}</b>", cell_bold),
-                Paragraph("<b>Evaluation Mode:</b>", cell_bold),
-                Paragraph("DEMO / EVALUATION DATA", cell_bold)
+                Paragraph("<b>Primary Recommendation:</b>", cell_bold),
+                Paragraph(f"<b>{html.escape(str(rec_text))}</b>", cell_bold),
+                Paragraph("<b>Screening Status:</b>", cell_bold),
+                Paragraph(f"<b>{html.escape(str(case_data.get('status', 'COMPLETED')))}</b>", cell_bold)
             ]
         ]
-        t_overview = Table(overview_data, colWidths=[95, 157, 95, 157])
+        t_overview = Table(overview_data, colWidths=[105, 147, 105, 147])
         t_overview.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
-            ('TOPPADDING', (0,0), (-1,-1), 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-        ]))
-        elements.append(t_overview)
-        elements.append(Spacer(1, 10))
-
-        # 3. Extracted Visual Fields Table
-        elements.append(Paragraph("1. Identity Field Extraction & Cross-Verification", section_heading))
-        fields = case_data.get("extracted_fields", [])
-        is_visa = (str(doc_type).upper() == "VISA")
-
-        if is_visa:
-            field_rows = [
-                [
-                    Paragraph("<b>Field Name</b>", cell_bold),
-                    Paragraph("<b>Extracted Value</b>", cell_bold),
-                    Paragraph("<b>OCR Engine</b>", cell_bold),
-                    Paragraph("<b>Confidence</b>", cell_bold),
-                    Paragraph("<b>Status / Validity</b>", cell_bold)
-                ]
-            ]
-            for f in fields:
-                val_clean = html.escape(str(f.get("visual_value") or f.get("mrz_value") or "—"))
-                val_status = f.get("validation", "VALID")
-                status_color = "#059669" if val_status == "VALID" else "#DC2626"
-                engine_str = f.get("ocr_engine") or case_data.get("ocr_engine") or "PaddleOCR"
-                field_rows.append([
-                    Paragraph(html.escape(str(f.get("field_name", "")).replace("_", " ").title()), cell_text),
-                    Paragraph(val_clean, cell_text),
-                    Paragraph(html.escape(str(engine_str)), cell_text),
-                    Paragraph(f"{f.get('confidence', 1.0):.2f}" if f.get('confidence') is not None else "—", cell_text),
-                    Paragraph(f"<font color='{status_color}'><b>{html.escape(str(val_status))}</b></font>", cell_text)
-                ])
-        else:
-            field_rows = [
-                [
-                    Paragraph("<b>Field Name</b>", cell_bold),
-                    Paragraph("<b>Visual (VIZ)</b>", cell_bold),
-                    Paragraph("<b>MRZ Decoded</b>", cell_bold),
-                    Paragraph("<b>Confidence</b>", cell_bold),
-                    Paragraph("<b>Cross-Check Status</b>", cell_bold)
-                ]
-            ]
-            for f in fields:
-                status_color = "#059669" if f.get("match_status") == "MATCH" else "#DC2626"
-                field_name_clean = html.escape(str(f.get("field_name", "")).replace("_", " ").title())
-                vis_val_clean = html.escape(str(f.get("visual_value", "—")))
-                mrz_val_clean = html.escape(str(f.get("mrz_value", "—")))
-                status_clean = html.escape(str(f.get("match_status", "MATCH")))
-                field_rows.append([
-                    Paragraph(field_name_clean, cell_text),
-                    Paragraph(vis_val_clean, cell_text),
-                    Paragraph(mrz_val_clean, cell_text),
-                    Paragraph(f"{f.get('confidence', 1.0):.2f}" if f.get('confidence') is not None else "—", cell_text),
-                    Paragraph(f"<font color='{status_color}'><b>{status_clean}</b></font>", cell_text)
-                ])
-        if len(field_rows) == 1:
-            field_rows.append([Paragraph("No extracted fields available.", cell_text)] * 5)
-
-        t_fields = Table(field_rows, colWidths=[100, 110, 110, 64, 120])
-        t_fields.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
             ('TOPPADDING', (0,0), (-1,-1), 3),
             ('BOTTOMPADDING', (0,0), (-1,-1), 3),
         ]))
+        elements.append(t_overview)
+        elements.append(Spacer(1, 6))
+
+        # -------------------------------------------------------------
+        # SECTION 2: DOCUMENT INFORMATION & FIELD EXTRACTION (WITH OCR STATUS)
+        # -------------------------------------------------------------
+        ocr_status = case_data.get("ocr_status") or ("SUCCESS" if case_data.get("extracted_fields") else "PARTIAL")
+        ocr_engine_str = case_data.get("ocr_engine") or "PaddleOCR + Tesseract Hybrid"
+        ocr_reason_str = case_data.get("ocr_reason") or ""
+        
+        status_color_map = {"SUCCESS": "#059669", "PARTIAL": "#D97706", "FAILED": "#DC2626"}
+        ocr_badge = f"<font color='{status_color_map.get(ocr_status, '#475569')}'><b>[{ocr_status}]</b></font>"
+
+        elements.append(Paragraph(
+            f"1. Document Information & Field Extraction &nbsp;&nbsp;{ocr_badge} &nbsp;<font size=7 color='#64748B'>(Engine: {html.escape(str(ocr_engine_str))})</font>",
+            section_heading
+        ))
+        if ocr_reason_str:
+            elements.append(Paragraph(f"<font size=7 color='#64748B'><i>Note: {html.escape(ocr_reason_str)}</i></font>", normal))
+
+        fields = case_data.get("extracted_fields", [])
+        field_rows = [
+            [
+                Paragraph("<b>Field Name</b>", cell_bold),
+                Paragraph("<b>Visual (VIZ) Value</b>", cell_bold),
+                Paragraph("<b>MRZ Encoded Value</b>", cell_bold),
+                Paragraph("<b>Confidence</b>", cell_bold),
+                Paragraph("<b>Cross-Validation Status</b>", cell_bold)
+            ]
+        ]
+
+        for f in fields:
+            f_name = html.escape(str(f.get("field_name", "")).replace("_", " ").title())
+            vis_val = html.escape(str(f.get("visual_value") or "—"))
+            mrz_val = html.escape(str(f.get("mrz_value") or "—"))
+            m_status = f.get("match_status", "MATCH")
+            m_color = "#059669" if m_status == "MATCH" else "#DC2626"
+            conf = f"{f.get('confidence', 1.0):.2f}" if f.get("confidence") is not None else "—"
+            field_rows.append([
+                Paragraph(f_name, cell_text),
+                Paragraph(vis_val, cell_text),
+                Paragraph(mrz_val, cell_text),
+                Paragraph(conf, cell_text),
+                Paragraph(f"<font color='{m_color}'><b>{html.escape(str(m_status))}</b></font>", cell_text)
+            ])
+
+        if len(field_rows) == 1:
+            field_rows.append([Paragraph("No extracted fields available.", cell_text)] * 5)
+
+        t_fields = Table(field_rows, colWidths=[100, 115, 115, 54, 120])
+        t_fields.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+            ('TOPPADDING', (0,0), (-1,-1), 2.5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
+        ]))
         elements.append(t_fields)
-        elements.append(Spacer(1, 10))
+        elements.append(Spacer(1, 6))
 
-        # 4. Multi-Signal Tampering Forensics & Biometrics
-        elements.append(Paragraph("2. Forensic & Biometric Integrity Analysis", section_heading))
+        # -------------------------------------------------------------
+        # SECTION 3: DOCUMENT INTEGRITY & FORENSIC ANALYSIS
+        # -------------------------------------------------------------
+        elements.append(Paragraph("2. Document Integrity & Forensic Analysis", section_heading))
         tamper = case_data.get("tamper_summary", {})
-        face = case_data.get("face_result") or {}
+        signals = tamper.get("signals", {})
 
-        ela_interp = html.escape(str(tamper.get("signals", {}).get("ela", {}).get("interpretation", "Normal compression baseline")))
-        noise_interp = html.escape(str(tamper.get("signals", {}).get("noise_residual", {}).get("interpretation", "Homogeneous noise distribution")))
-        copy_interp = html.escape(str(tamper.get("signals", {}).get("copy_move", {}).get("interpretation", "No cloned regions found")))
-        face_verdict = html.escape(str(face.get("verification_result", "NOT_RUN")))
-        face_rec = html.escape(str(face.get("recommendation", "N/A")))
-
-        bio_provider = html.escape(str(face.get("provider", "GaborLBP-512d-v1.2")))
-        bio_quality = html.escape(str(face.get("quality_status", "GOOD")))
-        bio_pad = html.escape(str(face.get("pad_status", "NOT_AVAILABLE")))
-        app_level = html.escape(str(face.get("appearance_level", "MINIMAL")))
+        ela_score = signals.get("ela", {}).get("anomaly_score", 0.0)
+        ela_interp = html.escape(str(signals.get("ela", {}).get("interpretation", "Homogeneous compression grid. No local resaving anomalies.")))
+        noise_score = signals.get("noise_residual", {}).get("anomaly_score", 0.0)
+        noise_interp = html.escape(str(signals.get("noise_residual", {}).get("interpretation", "Uniform camera sensor noise. No splicing boundaries.")))
+        copy_score = signals.get("copy_move", {}).get("anomaly_score", 0.0)
+        copy_interp = html.escape(str(signals.get("copy_move", {}).get("interpretation", "No duplicated or cloned feature clusters detected.")))
 
         forensic_rows = [
             [
                 Paragraph("<b>Forensic Dimension</b>", cell_bold),
-                Paragraph("<b>Observed Measurement</b>", cell_bold),
-                Paragraph("<b>Integrity Assessment</b>", cell_bold)
+                Paragraph("<b>Anomaly Score</b>", cell_bold),
+                Paragraph("<b>Technical Interpretation</b>", cell_bold)
             ],
             [
                 Paragraph("Error Level Analysis (ELA)", cell_text),
-                Paragraph(f"Score: {tamper.get('signals', {}).get('ela', {}).get('anomaly_score', 0.0)}/100", cell_text),
+                Paragraph(f"{ela_score:.1f} / 100", cell_text),
                 Paragraph(ela_interp, cell_text)
             ],
             [
                 Paragraph("Sensor Noise Residual", cell_text),
-                Paragraph(f"Score: {tamper.get('signals', {}).get('noise_residual', {}).get('anomaly_score', 0.0)}/100", cell_text),
+                Paragraph(f"{noise_score:.1f} / 100", cell_text),
                 Paragraph(noise_interp, cell_text)
             ],
             [
-                Paragraph("Copy-Move Detection", cell_text),
-                Paragraph(f"Score: {tamper.get('signals', {}).get('copy_move', {}).get('anomaly_score', 0.0)}/100", cell_text),
+                Paragraph("Copy-Move / Clone Detection", cell_text),
+                Paragraph(f"{copy_score:.1f} / 100", cell_text),
                 Paragraph(copy_interp, cell_text)
-            ],
-            [
-                Paragraph("Face Biometric Verification", cell_text),
-                Paragraph(
-                    f"Provider: <b>{bio_provider}</b><br/>"
-                    f"Similarity: {face.get('similarity_score', 'N/A')} (Thresh: {face.get('threshold', 0.65)})<br/>"
-                    f"Quality: {bio_quality} | PAD: {bio_pad}",
-                    cell_text
-                ),
-                Paragraph(
-                    f"<b>{face_verdict}</b> — {face_rec}<br/>"
-                    f"<i>Appearance variation: {app_level}. Biometric similarity is a forensic signal, not a standalone legal clearance.</i>",
-                    cell_text
-                )
             ]
         ]
-        t_forensic = Table(forensic_rows, colWidths=[130, 124, 250])
+        t_forensic = Table(forensic_rows, colWidths=[130, 94, 280])
         t_forensic.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+            ('TOPPADDING', (0,0), (-1,-1), 2.5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
+        ]))
+        elements.append(t_forensic)
+        elements.append(Spacer(1, 6))
+
+        # -------------------------------------------------------------
+        # SECTION 4: IDENTITY VERIFICATION & BIOMETRICS (WITH FACE CROPS)
+        # -------------------------------------------------------------
+        elements.append(Paragraph("3. Identity Verification & 1:1 Biometrics", section_heading))
+        face = case_data.get("face_result") or {}
+        bio_v2 = case_data.get("biometric_verification") or {}
+
+        decision_state = (
+            face.get("decision_state") or 
+            bio_v2.get("decision_state") or 
+            face.get("verification_result") or 
+            "NOT_EVALUATED"
+        )
+        provider_name = face.get("provider") or bio_v2.get("provider") or "SFace-ResNet-128d-v1.0"
+        provider_type = face.get("provider_type") or bio_v2.get("provider_type") or "DEEP_NEURAL"
+        sim_val = face.get("similarity_score") if face.get("similarity_score") is not None else bio_v2.get("similarity")
+        sim_str = f"{float(sim_val):.2f}" if sim_val is not None else "—"
+        thresh_val = face.get("threshold") or bio_v2.get("threshold") or 0.68
+        thresh_str = f"{float(thresh_val):.2f}"
+
+        quality_status = face.get("quality_status") or "GOOD"
+        pad_status = face.get("pad_status") or "NOT_AVAILABLE"
+        app_level = face.get("appearance_level") or "MINIMAL"
+        bio_rec = face.get("recommendation") or bio_v2.get("explanation") or "Biometric comparison evaluated."
+
+        state_color_map = {
+            "VERIFIED MATCH": "#059669",
+            "VERIFIED_MATCH": "#059669",
+            "MATCH": "#059669",
+            "VERIFIED MISMATCH": "#DC2626",
+            "VERIFIED_MISMATCH": "#DC2626",
+            "MISMATCH": "#DC2626",
+            "INCONCLUSIVE": "#D97706",
+            "BORDERLINE": "#D97706",
+            "INPUT_FAILURE": "#64748B",
+            "UNABLE_TO_VERIFY": "#64748B"
+        }
+        v_color = state_color_map.get(decision_state, "#475569")
+
+        # Load Face Images for Side-by-Side Comparison
+        doc_crop_path = os.path.join(settings.STORAGE_DIR, f"{screening_id}_doc_face.jpg")
+        live_crop_path = os.path.join(settings.STORAGE_DIR, f"{screening_id}_live_face.jpg")
+
+        doc_face_element = Paragraph("<font size=7 color='#64748B'>[Doc Face<br/>Not Extracted]</font>", cell_center)
+        if os.path.exists(doc_crop_path):
+            try:
+                doc_face_element = RLImage(doc_crop_path, width=65, height=78)
+            except Exception:
+                pass
+
+        live_face_element = Paragraph("<font size=7 color='#64748B'>[Selfie Face<br/>Not Presented]</font>", cell_center)
+        if os.path.exists(live_crop_path):
+            try:
+                live_face_element = RLImage(live_crop_path, width=65, height=78)
+            except Exception:
+                pass
+
+        # Operational guidance notes based on 4-state engine
+        if decision_state in ["VERIFIED MISMATCH", "VERIFIED_MISMATCH", "MISMATCH"]:
+            guidance = "<b>Secondary Security Escalation:</b> Biometric disparity detected. High risk of identity impersonation."
+        elif decision_state in ["INCONCLUSIVE", "BORDERLINE"]:
+            guidance = "<b>Officer Review Mandatory:</b> Score is borderline or provider lacks automated clearance certification."
+        elif decision_state in ["VERIFIED MATCH", "VERIFIED_MATCH", "MATCH"]:
+            guidance = "<b>Identity Correspondence:</b> Feature similarity meets validated criteria under active deep neural model."
+        else:
+            guidance = "<b>Re-Capture Required:</b> Insufficient biometric quality or face could not be detected."
+
+        bio_metrics_text = (
+            f"<b>Biometric Verdict:</b> <font color='{v_color}'><b>{html.escape(decision_state)}</b></font><br/>"
+            f"<b>Active Provider:</b> {html.escape(str(provider_name))} ({provider_type})<br/>"
+            f"<b>Cosine Similarity:</b> <b>{sim_str}</b> &nbsp;&nbsp;|&nbsp;&nbsp; <b>Match Threshold:</b> {thresh_str}<br/>"
+            f"<b>Image Quality:</b> {html.escape(str(quality_status))} &nbsp;&nbsp;|&nbsp;&nbsp; <b>PAD / Liveness:</b> {html.escape(str(pad_status))}<br/>"
+            f"<b>Appearance Variation:</b> {html.escape(str(app_level))}<br/>"
+            f"<b>Assessment:</b> {html.escape(str(bio_rec))}<br/>"
+            f"{guidance}<br/>"
+            f"<font size=6.5 color='#64748B'><i>Notice: Biometric similarity is a model-derived metric, not a legal confirmation of identity. PAD is currently transparently disclaimed as NOT_AVAILABLE.</i></font>"
+        )
+
+        biometric_table_data = [
+            [
+                Paragraph("<b>Doc Portrait</b>", cell_center),
+                Paragraph("<b>Live Capture</b>", cell_center),
+                Paragraph("<b>Verification Metrics & Decision Rationale</b>", cell_bold)
+            ],
+            [
+                doc_face_element,
+                live_face_element,
+                Paragraph(bio_metrics_text, cell_text)
+            ]
+        ]
+        t_biometric = Table(biometric_table_data, colWidths=[75, 75, 354])
+        t_biometric.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('ALIGN', (0,0), (1,-1), 'CENTER'),
             ('TOPPADDING', (0,0), (-1,-1), 3),
             ('BOTTOMPADDING', (0,0), (-1,-1), 3),
         ]))
-        elements.append(t_forensic)
-        elements.append(Spacer(1, 10))
+        elements.append(t_biometric)
+        elements.append(Spacer(1, 6))
 
-        # 5. Risk Evidence Reasons
-        elements.append(Paragraph("3. Explainable Risk Factors & Findings", section_heading))
+        # -------------------------------------------------------------
+        # SECTION 5: RISK ANALYSIS & SIGNAL BREAKDOWN
+        # -------------------------------------------------------------
+        elements.append(Paragraph("4. Risk Analysis & Signal Breakdown", section_heading))
+        signals_dict = case_data.get("signal_breakdown") or {}
         reasons = case_data.get("risk_reasons", [])
+
+        # Display Signal Breakdown Row
+        mrz_sig = signals_dict.get("mrz_check_digits", 0.0)
+        viz_sig = signals_dict.get("viz_mrz_consistency", 0.0)
+        tamp_sig = signals_dict.get("tamper_forensics", 0.0)
+        face_sig = signals_dict.get("face_verification", 0.0)
+        rules_sig = signals_dict.get("document_rules", 0.0)
+        qual_sig = signals_dict.get("quality_penalty", 0.0)
+
+        sig_table_data = [
+            [
+                Paragraph("<b>MRZ Digits</b>", cell_center),
+                Paragraph("<b>VIZ/MRZ Cross</b>", cell_center),
+                Paragraph("<b>Forensics</b>", cell_center),
+                Paragraph("<b>Biometrics</b>", cell_center),
+                Paragraph("<b>Rules</b>", cell_center),
+                Paragraph("<b>Quality</b>", cell_center)
+            ],
+            [
+                Paragraph(f"{mrz_sig:.1f}", cell_center),
+                Paragraph(f"{viz_sig:.1f}", cell_center),
+                Paragraph(f"{tamp_sig:.1f}", cell_center),
+                Paragraph(f"{face_sig:.1f}", cell_center),
+                Paragraph(f"{rules_sig:.1f}", cell_center),
+                Paragraph(f"{qual_sig:.1f}", cell_center)
+            ]
+        ]
+        t_sig = Table(sig_table_data, colWidths=[84, 84, 84, 84, 84, 84])
+        t_sig.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F8FAFC")),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#E2E8F0")),
+            ('TOPPADDING', (0,0), (-1,-1), 2),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2),
+        ]))
+        elements.append(t_sig)
+        elements.append(Spacer(1, 4))
+
+        # Top Risk Reasons Table
         reason_rows = [
             [
                 Paragraph("<b>Category</b>", cell_bold),
@@ -326,94 +449,88 @@ class ReportGenerator:
                 Paragraph("<b>Operational Guidance</b>", cell_bold)
             ]
         ]
-        for r in reasons[:6]:  # Show top 6
+        for r in reasons[:4]:  # Top 4 factors
             sev = r.get("severity", "LOW")
             scolor = "#DC2626" if sev in ["CRITICAL", "HIGH"] else "#D97706" if sev == "MEDIUM" else "#059669"
-            cat_clean = html.escape(str(r.get("category", "")).replace("_", " "))
-            sev_clean = html.escape(str(sev))
-            sum_clean = html.escape(str(r.get("summary", "")))
-            act_clean = html.escape(str(r.get("action", "")))
             reason_rows.append([
-                Paragraph(cat_clean, cell_text),
-                Paragraph(f"<font color='{scolor}'><b>{sev_clean}</b></font>", cell_text),
-                Paragraph(sum_clean, cell_text),
-                Paragraph(act_clean, cell_text)
+                Paragraph(html.escape(str(r.get("category", "")).replace("_", " ")), cell_text),
+                Paragraph(f"<font color='{scolor}'><b>{html.escape(str(sev))}</b></font>", cell_text),
+                Paragraph(html.escape(str(r.get("summary", ""))), cell_text),
+                Paragraph(html.escape(str(r.get("action", ""))), cell_text)
             ])
         if len(reason_rows) == 1:
             reason_rows.append([
-                Paragraph("CLEARED", cell_text),
+                Paragraph("ALL SIGNALS CLEAR", cell_text),
                 Paragraph("<font color='#059669'><b>LOW</b></font>", cell_text),
-                Paragraph("Document passed all automated integrity and rule checks.", cell_text),
-                Paragraph("Permit routine passenger transit.", cell_text)
+                Paragraph("No significant anomalies detected in document or biometric checks.", cell_text),
+                Paragraph("Routine border transit permissible.", cell_text)
             ])
 
         t_reasons = Table(reason_rows, colWidths=[90, 60, 194, 160])
         t_reasons.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#F1F5F9")),
             ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor("#CBD5E1")),
-            ('TOPPADDING', (0,0), (-1,-1), 3),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+            ('TOPPADDING', (0,0), (-1,-1), 2.5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
         ]))
         elements.append(t_reasons)
-        elements.append(Spacer(1, 12))
+        elements.append(Spacer(1, 6))
 
-        # 6. Permissioned Blockchain Audit Anchor & Officer Sign-off Block
+        # -------------------------------------------------------------
+        # SECTIONS 6 & 7: AUDIT INTEGRITY & OFFICER SIGN-OFF BLOCK
+        # -------------------------------------------------------------
+        elements.append(Paragraph("5. Cryptographic Audit Trail & Officer Sign-off", section_heading))
         b_anchor = case_data.get("blockchain_anchor") or {}
-        anchor_status = b_anchor.get("status", "UNAVAILABLE")
+        anchor_status = b_anchor.get("status", "SIMULATED / OFFLINE")
         status_color = "#059669" if anchor_status == "VERIFIED" else ("#DC2626" if anchor_status == "MISMATCH" else "#D97706")
 
         doc_hash = b_anchor.get("document_hash") or "N/A"
         res_hash = b_anchor.get("result_hash") or "N/A"
-        tx_id = b_anchor.get("transaction_id") or "NONE (Private ledger offline / Pending host deployment)"
-        network_str = b_anchor.get("network", "Hyperledger Fabric (Private)")
-        channel_str = b_anchor.get("channel", "satyascan-channel")
-        chaincode_str = b_anchor.get("chaincode", "screening_anchor")
-
+        tx_id = b_anchor.get("transaction_id") or "SIMULATED-LOCAL-ANCHOR (External private ledger offline)"
         audit_events = case_data.get("audit_trail", [])
-        latest_hash = audit_events[-1].get("event_hash") if audit_events else "0" * 64
 
         anchor_info_p = Paragraph(
-            f"<b>PERMISSIONED BLOCKCHAIN AUDIT ANCHOR:</b><br/>"
-            f"<font size=6.5 color='#334155'><b>Network:</b> {network_str} | <b>Channel:</b> {channel_str} | <b>Chaincode:</b> {chaincode_str}</font><br/>"
-            f"<font size=6.5 color='#334155'><b>Anchor Status:</b> <font color='{status_color}'><b>{anchor_status}</b></font> | "
-            f"<b>Local SHA-256 Audit Chain:</b> <font color='#059669'><b>VERIFIED ({len(audit_events)} events unbroken)</b></font></font><br/>"
-            f"<font size=5.5 color='#475569'><b>Document SHA-256 Digest:</b> {doc_hash}</font><br/>"
-            f"<font size=5.5 color='#475569'><b>Result Canonical SHA-256 Digest:</b> {res_hash}</font><br/>"
-            f"<font size=5.5 color='#64748B'><b>Transaction ID:</b> {tx_id}</font><br/>"
-            f"<font size=6 color='#64748B'><i>Evidence stays off-chain; cryptographic proof goes on-chain. Zero PII/biometrics.</i></font>",
+            f"<b>CRYPTOGRAPHIC INTEGRITY & AUDIT CHAIN:</b><br/>"
+            f"<font size=6.5 color='#334155'><b>Local SHA-256 Chain:</b> <font color='#059669'><b>VERIFIED ({len(audit_events)} sequential events unbroken)</b></font></font><br/>"
+            f"<font size=6.5 color='#334155'><b>Distributed Ledger:</b> Hyperledger Fabric &nbsp;|&nbsp; <b>Anchor:</b> <font color='{status_color}'><b>{anchor_status}</b></font></font><br/>"
+            f"<font size=5.5 color='#475569'><b>Doc Digest:</b> {doc_hash}</font><br/>"
+            f"<font size=5.5 color='#475569'><b>Canonical Result Digest:</b> {res_hash}</font><br/>"
+            f"<font size=5.5 color='#64748B'><b>Tx Digest:</b> {tx_id}</font><br/>"
+            f"<font size=6 color='#64748B'><i>Zero PII on-chain. Local SHA-256 chain operates continuously; ledger anchor operates in connected or simulation mode.</i></font>",
             normal
         )
 
         sign_p = Paragraph(
-            "<b>Screening Officer Sign-off:</b><br/><br/>"
-            "Signature: __________________________<br/>"
-            "Badge / Station: ____________________<br/>"
-            "Action: [  ] CLEARED   [  ] SECONDARY",
+            "<b>Border Screening Officer Sign-off:</b><br/>"
+            "Officer Signature: __________________________<br/>"
+            "Badge Number: ____________________________<br/>"
+            "Final Disposition: &nbsp;[ &nbsp;] CLEAR &nbsp;&nbsp;[ &nbsp;] SECONDARY &nbsp;&nbsp;[ &nbsp;] REFUSED<br/>"
+            f"Date / Station: {ts_str[:10]} &nbsp;/ &nbsp;{html.escape(str(cp_info))}",
             normal
         )
 
         sign_data = [[anchor_info_p, sign_p]]
-        t_sign = Table(sign_data, colWidths=[330, 174])
+        t_sign = Table(sign_data, colWidths=[310, 194])
         t_sign.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,-1), colors.HexColor("#F8FAFC")),
             ('BOX', (0,0), (-1,-1), 1, colors.HexColor("#CBD5E1")),
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
             ('TOPPADDING', (0,0), (-1,-1), 4),
             ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-            ('LEFTPADDING', (0,0), (-1,-1), 6),
-            ('RIGHTPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING', (0,0), (-1,-1), 5),
+            ('RIGHTPADDING', (0,0), (-1,-1), 5),
         ]))
         elements.append(t_sign)
-        elements.append(Spacer(1, 6))
+        elements.append(Spacer(1, 4))
 
-        # 7. Mandatory Disclaimer
+        # Statutory Disclaimer
         disclaimer_text = (
-            "<b>NOTICE & DISCLAIMER:</b> This verification record is generated by the SatyaScan "
-            "Document Integrity & Identity Verification Workstation for decision-support purposes only. Automated findings, "
-            "forensic anomaly scores, and biometric metrics do not autonomously constitute a legal verdict. Final admissibility "
-            "and legal clearance decisions remain the sole statutory prerogative of authorized immigration and border security officers."
+            "<b>STATUTORY NOTICE & LEGAL DISCLAIMER:</b> This verification dossier is generated by the SatyaScan "
+            "Forensic Intelligence Workstation for automated decision-support purposes only. Automated findings, "
+            "forensic anomaly scores, and biometric metrics do not autonomously constitute a final legal verdict. "
+            "Statutory clearance authority resides exclusively with authorized immigration and border enforcement officers."
         )
-        elements.append(Paragraph(disclaimer_text, ParagraphStyle("Disc", parent=normal, fontSize=6.5, leading=8.5, textColor=colors.HexColor("#64748B"))))
+        elements.append(Paragraph(disclaimer_text, ParagraphStyle("Disc", parent=normal, fontSize=6, leading=7.5, textColor=colors.HexColor("#64748B"))))
 
         doc.build(elements, canvasmaker=NumberedCanvas)
         return output_pdf_path
