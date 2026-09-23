@@ -38,6 +38,7 @@ ENV PYTHONUNBUFFERED=1
 # Copy application source
 COPY ai/ ./ai/
 COPY backend/ ./backend/
+COPY data/ ./data/
 COPY documents/ ./documents/
 
 # Expose backend API port
