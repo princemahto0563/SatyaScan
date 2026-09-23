@@ -91,7 +91,8 @@ class ScreeningOrchestrator:
         operator_id: Optional[int] = None,
         doc_type: str = "PASSPORT",
         checkpoint_id: Optional[str] = None,
-        checkpoint_name: Optional[str] = None
+        checkpoint_name: Optional[str] = None,
+        classification_result: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Executes end-to-end screening workflow with robust exception handling and guaranteed terminal state.
@@ -109,7 +110,8 @@ class ScreeningOrchestrator:
                 operator_id=operator_id,
                 requested_doc_type=doc_type,
                 checkpoint_id=checkpoint_id,
-                checkpoint_name=checkpoint_name
+                checkpoint_name=checkpoint_name,
+                classification_result=classification_result
             )
         except Exception as exc:
             db.rollback()
@@ -158,7 +160,8 @@ class ScreeningOrchestrator:
         operator_id: Optional[int] = None,
         requested_doc_type: str = "PASSPORT",
         checkpoint_id: Optional[str] = None,
-        checkpoint_name: Optional[str] = None
+        checkpoint_name: Optional[str] = None,
+        classification_result: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         # 0. Initial Audit Event: Upload
         AuditService.record_event(
@@ -194,7 +197,11 @@ class ScreeningOrchestrator:
             )
 
         # 2. Document Classifier Gate (Verify supported document type: Passport or Visa)
-        class_res = self.document_classifier.classify_image(doc_image_path)
+        if classification_result is not None:
+            class_res = classification_result
+        else:
+            class_res = self.document_classifier.classify_image(doc_image_path)
+
         AuditService.record_event(
             db, screening_id, "DOCUMENT_CLASSIFIED",
             {

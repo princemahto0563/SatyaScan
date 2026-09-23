@@ -50,7 +50,7 @@ def validate_screening_id(screening_id: str) -> str:
     response_model=ScreeningDetailResponse,
     dependencies=[Depends(rate_limit_screening)]
 )
-async def create_screening(
+def create_screening(
     document_file: UploadFile = File(...),
     live_selfie_file: Optional[UploadFile] = File(None),
     document_type: str = Form("PASSPORT"),
@@ -62,6 +62,7 @@ async def create_screening(
     Executes automated screening on uploaded travel document and optional live selfie.
     Requires authenticated officer session. Enforces file size, magic header,
     image decode validation, checkpoint anti-spoofing, and document classifier gate.
+    Runs synchronously in Starlette threadpool to prevent blocking the Uvicorn event loop.
     """
     # 1. Anti-Spoofing: Checkpoint identity must strictly match authenticated officer session
     if checkpoint_id and current_user.checkpoint_id:
@@ -85,7 +86,8 @@ async def create_screening(
         )
 
     # 3. Validate and save document file securely
-    doc_bytes = await document_file.read()
+    document_file.file.seek(0)
+    doc_bytes = document_file.file.read()
     validate_uploaded_image_bytes(doc_bytes, document_file.filename or "upload.jpg")
 
     clean_doc_name = sanitize_filename(document_file.filename or "doc.jpg")
@@ -98,11 +100,13 @@ async def create_screening(
 
     with open(doc_path, "wb") as f:
         f.write(doc_bytes)
+    del doc_bytes
 
     # 4. Validate and save live selfie if provided
     live_path = None
     if live_selfie_file and live_selfie_file.filename:
-        live_bytes = await live_selfie_file.read()
+        live_selfie_file.file.seek(0)
+        live_bytes = live_selfie_file.file.read()
         validate_uploaded_image_bytes(live_bytes, live_selfie_file.filename)
 
         clean_live_name = sanitize_filename(live_selfie_file.filename)
@@ -114,6 +118,7 @@ async def create_screening(
         live_path = os.path.join(settings.UPLOAD_DIR, live_filename)
         with open(live_path, "wb") as f:
             f.write(live_bytes)
+        del live_bytes
 
     # 5. Document Classifier Gate: Independently validate document type BEFORE heavy processing
     classification = screening_orchestrator.document_classifier.classify_image(doc_path)
@@ -141,6 +146,7 @@ async def create_screening(
     verified_doc_type = classification["verdict"]
 
     # 6. Execute full dedicated screening pipeline with authentic operator attribution
+    # Pass pre-computed classification to avoid redundant second OCR/classification pass
     result = screening_orchestrator.process_screening(
         db=db,
         doc_image_path=doc_path,
@@ -148,7 +154,8 @@ async def create_screening(
         operator_id=current_user.id,
         doc_type=verified_doc_type,
         checkpoint_id=getattr(current_user, "checkpoint_id", None),
-        checkpoint_name=getattr(current_user, "checkpoint_name", None)
+        checkpoint_name=getattr(current_user, "checkpoint_name", None),
+        classification_result=classification
     )
 
     return result
