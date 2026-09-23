@@ -50,16 +50,36 @@ class FaceVerificationService:
         self.eye_cascade = None
         try:
             cascade_cls = getattr(cv2, "CascadeClassifier", None)
-            if cascade_cls is not None and hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
-                cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-                if os.path.exists(cascade_path):
-                    self.face_cascade = cascade_cls(cascade_path)
-                profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
-                if os.path.exists(profile_path):
-                    self.profile_cascade = cascade_cls(profile_path)
-                eye_cascade_path = cv2.data.haarcascades + "haarcascade_eye.xml"
-                if os.path.exists(eye_cascade_path):
-                    self.eye_cascade = cascade_cls(eye_cascade_path)
+            if cascade_cls is not None:
+                weights_dir = os.path.join(os.path.dirname(__file__), "weights")
+                data_dir = getattr(cv2.data, "haarcascades", "") if hasattr(cv2, "data") else ""
+
+                # Frontal face cascade
+                for p in [os.path.join(weights_dir, "haarcascade_frontalface_default.xml"),
+                          os.path.join(data_dir, "haarcascade_frontalface_default.xml")]:
+                    if p and os.path.exists(p):
+                        loaded = cascade_cls(p)
+                        if not loaded.empty():
+                            self.face_cascade = loaded
+                            break
+
+                # Profile face cascade
+                for p in [os.path.join(weights_dir, "haarcascade_profileface.xml"),
+                          os.path.join(data_dir, "haarcascade_profileface.xml")]:
+                    if p and os.path.exists(p):
+                        loaded = cascade_cls(p)
+                        if not loaded.empty():
+                            self.profile_cascade = loaded
+                            break
+
+                # Eye cascade
+                for p in [os.path.join(weights_dir, "haarcascade_eye.xml"),
+                          os.path.join(data_dir, "haarcascade_eye.xml")]:
+                    if p and os.path.exists(p):
+                        loaded = cascade_cls(p)
+                        if not loaded.empty():
+                            self.eye_cascade = loaded
+                            break
         except Exception:
             self.face_cascade = None
             self.profile_cascade = None
