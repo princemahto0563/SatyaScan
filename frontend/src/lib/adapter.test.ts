@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mapScreeningResponseToReportViewModel } from "./adapter.ts";
-import { ScreeningDetail } from "./types.ts";
+import { mapScreeningResponseToReportViewModel } from "./adapter";
+import { ScreeningDetail } from "./types";
 
 function createBaseScreening(id: string): ScreeningDetail {
   return {
