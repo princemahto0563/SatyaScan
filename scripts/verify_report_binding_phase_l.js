@@ -253,7 +253,8 @@ async function run() {
   console.log('\n[7] Testing Official PDF Download for Case 01...');
   let pdfResult = null;
   if (case01Data.pdfUrl) {
-    console.log('PDF URL:', case01Data.pdfUrl.slice(0, 100) + '...');
+    const sanitizedPdfUrl = case01Data.pdfUrl.replace(/token=[^&]+/g, 'token=[REDACTED]');
+    console.log('PDF URL:', sanitizedPdfUrl);
     pdfResult = await page.evaluate(async (url) => {
       try {
         const resp = await fetch(url);
@@ -407,14 +408,25 @@ async function run() {
     pdfResult.size > 1000 &&
     isolationVerified;
 
-  const summary = {
+  const sanitizeTokens = (obj) => {
+    return JSON.parse(
+      JSON.stringify(obj, (key, value) => {
+        if (typeof value === 'string' && value.includes('token=')) {
+          return value.replace(/token=[^&]+/g, 'token=[REDACTED]');
+        }
+        return value;
+      })
+    );
+  };
+
+  const summary = sanitizeTokens({
     case01Data,
     crossCheckData,
     pdfResult,
     case03Data,
     isolationVerified,
     finalVerdict,
-  };
+  });
 
   fs.writeFileSync(
     path.join(EVIDENCE_DIR, 'phase_l_verification_summary.json'),

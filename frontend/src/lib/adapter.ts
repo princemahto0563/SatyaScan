@@ -253,6 +253,66 @@ function resolveFieldValue(
 }
 
 /**
+ * Verifies if year, month, day represent a real calendar day.
+ */
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+  const d = new Date(year, month - 1, day);
+  return d.getFullYear() === year && d.getMonth() === month - 1 && d.getDate() === day;
+}
+
+/**
+ * Normalizes valid date representations to canonical ISO YYYY-MM-DD for comparison ONLY.
+ * Supports:
+ * - DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+ * - YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+ * - YYMMDD (ICAO Doc 9303 raw format)
+ * Returns ISO string if valid, otherwise null.
+ */
+export function normalizeDateForComparison(val: any): string | null {
+  if (!val) return null;
+  const s = String(val).trim();
+  if (!s || s === "—" || s === "-" || s.toLowerCase() === "null") return null;
+
+  // Pattern: YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD
+  const ymdMatch = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (ymdMatch) {
+    const y = parseInt(ymdMatch[1], 10);
+    const m = parseInt(ymdMatch[2], 10);
+    const d = parseInt(ymdMatch[3], 10);
+    if (isValidCalendarDate(y, m, d)) {
+      return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+    }
+  }
+
+  // Pattern: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+  const dmyMatch = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (dmyMatch) {
+    const d = parseInt(dmyMatch[1], 10);
+    const m = parseInt(dmyMatch[2], 10);
+    const y = parseInt(dmyMatch[3], 10);
+    if (isValidCalendarDate(y, m, d)) {
+      return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+    }
+  }
+
+  // Pattern: YYMMDD (6 digits, ICAO 9303 standard)
+  const raw6Match = s.match(/^(\d{2})(\d{2})(\d{2})$/);
+  if (raw6Match) {
+    let y = parseInt(raw6Match[1], 10);
+    y = y > 50 ? 1900 + y : 2000 + y;
+    const m = parseInt(raw6Match[2], 10);
+    const d = parseInt(raw6Match[3], 10);
+    if (isValidCalendarDate(y, m, d)) {
+      return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Builds dynamic MRZ & Visual Inspection Zone cross-check rows.
  * Merges every standard canonical field and all extra extracted fields.
  */
@@ -296,19 +356,55 @@ function buildCrossCheckRows(
     const mrzVal = normalizeFieldValue(mrzValRaw || fieldMatch?.mrz_value, "");
     const conf = fieldMatch?.confidence ?? (vizVal ? 0.95 : 0.0);
 
+    const isDateField =
+      def.key === "date_of_birth" ||
+      def.key === "date_of_expiry" ||
+      def.key.includes("date") ||
+      def.key === "dob" ||
+      def.key === "expiry";
+
     let status: CrossCheckRow["status"] = "NOT_PRESENT";
     let statusLabel = "Not Present";
 
     if (vizVal && mrzVal) {
-      // Comparison
-      const cleanV = vizVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      const cleanM = mrzVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-      if (cleanV === cleanM || cleanV.startsWith(cleanM) || cleanM.startsWith(cleanV)) {
-        status = "MATCH";
-        statusLabel = "Match";
+      if (isDateField) {
+        const normV = normalizeDateForComparison(vizVal);
+        const normM = normalizeDateForComparison(mrzVal);
+        if (normV && normM) {
+          if (normV === normM) {
+            status = "MATCH";
+            statusLabel = "Match";
+          } else {
+            status = "MISMATCH";
+            statusLabel = "Discrepancy";
+          }
+        } else if (normV || normM) {
+          // One is a valid date, the other is invalid -> MISMATCH
+          status = "MISMATCH";
+          statusLabel = "Discrepancy";
+        } else {
+          // Neither is a valid calendar date: fallback to sanitized literal comparison
+          const cleanV = vizVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+          const cleanM = mrzVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+          if (cleanV && cleanV === cleanM) {
+            status = "MATCH";
+            statusLabel = "Match";
+          } else {
+            status = "MISMATCH";
+            statusLabel = "Discrepancy";
+          }
+        }
       } else {
-        status = "MISMATCH";
-        statusLabel = "Discrepancy";
+        // Comparison for non-date fields
+        const cleanV = vizVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+        const cleanM = mrzVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+        if (cleanV === cleanM || cleanV.startsWith(cleanM) || cleanM.startsWith(cleanV)) {
+          status = "MATCH";
+          statusLabel = "Match";
+        } else {
+          status = "MISMATCH";
+          statusLabel = "Discrepancy";
+        }
       }
     } else if (vizVal) {
       status = "VIZ_ONLY";
@@ -335,14 +431,41 @@ function buildCrossCheckRows(
     if (!handledKeys.has(lk) && lk !== "passport_number" && lk !== "name") {
       const vVal = normalizeFieldValue(f.visual_value, "");
       const mVal = normalizeFieldValue(f.mrz_value, "");
+      let status: CrossCheckRow["status"] = (f.match_status as any) || "VIZ_ONLY";
+      let statusLabel = f.match_status || "Extracted";
+
+      const isExtraDateField = lk.includes("date") || lk === "dob" || lk === "expiry";
+      if (vVal && mVal) {
+        if (isExtraDateField) {
+          const nV = normalizeDateForComparison(vVal);
+          const nM = normalizeDateForComparison(mVal);
+          if (nV && nM) {
+            if (nV === nM) {
+              status = "MATCH";
+              statusLabel = "Match";
+            } else {
+              status = "MISMATCH";
+              statusLabel = "Discrepancy";
+            }
+          }
+        } else {
+          const cV = vVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+          const cM = mVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+          if (cV === cM || cV.startsWith(cM) || cM.startsWith(cV)) {
+            status = "MATCH";
+            statusLabel = "Match";
+          }
+        }
+      }
+
       rows.push({
         fieldName: f.field_name,
         displayName: f.field_name.replace(/_/g, " ").toUpperCase(),
         visualValue: vVal || "Not available",
         mrzValue: mVal || "Not available",
         confidence: f.confidence,
-        status: (f.match_status as any) || "VIZ_ONLY",
-        statusLabel: f.match_status || "Extracted",
+        status,
+        statusLabel,
       });
     }
   }

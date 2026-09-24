@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mapScreeningResponseToReportViewModel } from "./adapter";
+import { mapScreeningResponseToReportViewModel, normalizeDateForComparison } from "./adapter";
 import { ScreeningDetail } from "./types";
 
 function createBaseScreening(id: string): ScreeningDetail {
@@ -249,30 +249,62 @@ console.log("Starting Frontend Adapter Unit Tests (Phase K)...");
   console.log("✓ Test 4: No MRZ / MRZ unparsed PASS");
 }
 
-// Test 5: VIZ = MRZ match
+// Test 5: VIZ = MRZ match (including date format normalization DD/MM/YYYY vs YYYY-MM-DD)
 {
   const data = createBaseScreening("SAT-005");
   const model = mapScreeningResponseToReportViewModel(data);
 
+  // Document Number match
   const docNumRow = model.crossCheckRows.find((r) => r.fieldName === "document_number");
   assert.ok(docNumRow);
   assert.equal(docNumRow.status, "MATCH");
   assert.equal(docNumRow.statusLabel, "Match");
-  console.log("✓ Test 5: VIZ = MRZ match PASS");
+
+  // Date of Birth match (VIZ: 14/05/1992 vs MRZ: 1992-05-14)
+  const dobRow = model.crossCheckRows.find((r) => r.fieldName === "date_of_birth");
+  assert.ok(dobRow);
+  assert.equal(dobRow.status, "MATCH");
+  assert.equal(dobRow.statusLabel, "Match");
+  assert.equal(dobRow.visualValue, "14/05/1992");
+  assert.equal(dobRow.mrzValue, "1992-05-14");
+
+  // Date of Expiry match (VIZ: 13/05/2028 vs MRZ: 2028-05-13)
+  const expiryRow = model.crossCheckRows.find((r) => r.fieldName === "date_of_expiry");
+  assert.ok(expiryRow);
+  assert.equal(expiryRow.status, "MATCH");
+  assert.equal(expiryRow.statusLabel, "Match");
+  assert.equal(expiryRow.visualValue, "13/05/2028");
+  assert.equal(expiryRow.mrzValue, "2028-05-13");
+
+  console.log("✓ Test 5: VIZ = MRZ match (including 14/05/1992 = 1992-05-14 and 13/05/2028 = 2028-05-13) PASS");
 }
 
-// Test 6: VIZ/MRZ mismatch
+// Test 6: VIZ/MRZ mismatch (document number altered and actual calendar date mismatch 14/05/1992 vs 1992-05-15)
 {
   const data = createBaseScreening("SAT-006");
   const docNumField = data.extracted_fields.find((f) => f.field_name === "document_number");
   if (docNumField) docNumField.visual_value = "A9999999"; // Alter visual value
 
+  // Alter visual date of birth to 14/05/1992 while MRZ is 1992-05-15 (differing day)
+  const dobField = data.extracted_fields.find((f) => f.field_name === "date_of_birth");
+  if (dobField) dobField.visual_value = "14/05/1992";
+  if (data.mrz_data) data.mrz_data.date_of_birth = "1992-05-15";
+
   const model = mapScreeningResponseToReportViewModel(data);
+
   const docNumRow = model.crossCheckRows.find((r) => r.fieldName === "document_number");
   assert.ok(docNumRow);
   assert.equal(docNumRow.status, "MISMATCH");
   assert.equal(docNumRow.statusLabel, "Discrepancy");
-  console.log("✓ Test 6: VIZ/MRZ mismatch PASS");
+
+  const dobRow = model.crossCheckRows.find((r) => r.fieldName === "date_of_birth");
+  assert.ok(dobRow);
+  assert.equal(dobRow.status, "MISMATCH");
+  assert.equal(dobRow.statusLabel, "Discrepancy");
+  assert.equal(dobRow.visualValue, "14/05/1992");
+  assert.equal(dobRow.mrzValue, "1992-05-15");
+
+  console.log("✓ Test 6: VIZ/MRZ mismatch (including 14/05/1992 vs 1992-05-15 => MISMATCH) PASS");
 }
 
 // Test 7: Missing optional fields (Truthful unavailable state, NO fake defaults)
@@ -365,4 +397,36 @@ console.log("Starting Frontend Adapter Unit Tests (Phase K)...");
   console.log("✓ Test 11: Screening A vs Screening B isolation PASS");
 }
 
-console.log("\nALL 11 FRONTEND ADAPTER UNIT TESTS PASSED SUCCESSFULLY!");
+// Test 12: Canonical date normalization helper (DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY, DD.MM.YYYY, invalid dates)
+{
+  // DD/MM/YYYY
+  assert.equal(normalizeDateForComparison("14/05/1992"), "1992-05-14");
+  assert.equal(normalizeDateForComparison("13/05/2028"), "2028-05-13");
+  
+  // YYYY-MM-DD
+  assert.equal(normalizeDateForComparison("1992-05-14"), "1992-05-14");
+  assert.equal(normalizeDateForComparison("2028-05-13"), "2028-05-13");
+
+  // DD-MM-YYYY
+  assert.equal(normalizeDateForComparison("14-05-1992"), "1992-05-14");
+
+  // DD.MM.YYYY
+  assert.equal(normalizeDateForComparison("14.05.1992"), "1992-05-14");
+
+  // ICAO raw 6 digits YYMMDD
+  assert.equal(normalizeDateForComparison("920514"), "1992-05-14");
+  assert.equal(normalizeDateForComparison("280513"), "2028-05-13");
+
+  // Invalid calendar dates -> null
+  assert.equal(normalizeDateForComparison("31/02/1992"), null); // Feb 31 does not exist
+  assert.equal(normalizeDateForComparison("14/13/1992"), null); // Month 13 invalid
+  assert.equal(normalizeDateForComparison("32/05/1992"), null); // Day 32 invalid
+  assert.equal(normalizeDateForComparison("not-a-date"), null);
+  assert.equal(normalizeDateForComparison(""), null);
+  assert.equal(normalizeDateForComparison("-"), null);
+  assert.equal(normalizeDateForComparison(null), null);
+
+  console.log("✓ Test 12: Canonical date normalization and invalid date rejection PASS");
+}
+
+console.log("\nALL 12 FRONTEND ADAPTER UNIT TESTS PASSED SUCCESSFULLY!");

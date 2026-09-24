@@ -38,7 +38,7 @@ def get_auth_token() -> str:
     dt = time.perf_counter() - t0
     assert resp.status_code == 200, f"Login failed: {resp.status_code} {resp.text}"
     token = resp.json()["access_token"]
-    print(f"[Auth] Logged in successfully in {dt:.2f}s. Token: {token[:12]}...")
+    print(f"[Auth] Logged in successfully in {dt:.2f}s.")
     return token
 
 
