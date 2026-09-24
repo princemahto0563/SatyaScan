@@ -103,12 +103,13 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
 # --- Authentication & RBAC Dependencies ---
 
 def get_current_user(
+    request: Request,
     token_creds: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
     token_param: Optional[str] = Query(None, alias="token"),
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Validates Bearer JWT token (from Authorization header or query parameter 'token')
+    Validates Bearer JWT token (from Authorization header or query parameter 'token' / 'access_token')
     and returns authenticated User model.
     In strict mode or production, strictly requires valid token (rejects missing with HTTP 401).
     In evaluation prototype mode, falls back to default officer if no token was passed,
@@ -120,6 +121,8 @@ def get_current_user(
         raw_token = token_creds.credentials
     elif token_param:
         raw_token = token_param
+    elif request and request.query_params.get("access_token"):
+        raw_token = request.query_params.get("access_token")
 
     if raw_token:
         payload = decode_access_token(raw_token)

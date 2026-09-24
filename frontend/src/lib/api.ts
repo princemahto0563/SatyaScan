@@ -44,7 +44,20 @@ type AuthListener = (session: UserSession | null) => void;
 const authListeners: Set<AuthListener> = new Set();
 
 export function getSession(): UserSession | null {
-  return inMemorySession;
+  if (inMemorySession) return inMemorySession;
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      const stored = sessionStorage.getItem("satyascan_session");
+      if (stored) {
+        inMemorySession = JSON.parse(stored);
+        if (inMemorySession?.access_token) {
+          inMemoryAuthToken = inMemorySession.access_token;
+        }
+        return inMemorySession;
+      }
+    } catch {}
+  }
+  return null;
 }
 
 export function subscribeAuth(listener: AuthListener): () => void {
@@ -56,6 +69,20 @@ export function subscribeAuth(listener: AuthListener): () => void {
 
 function notifyAuthChange(session: UserSession | null) {
   inMemorySession = session;
+  inMemoryAuthToken = session?.access_token || null;
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      if (session) {
+        sessionStorage.setItem("satyascan_session", JSON.stringify(session));
+        if (session.access_token) {
+          sessionStorage.setItem("satyascan_auth_token", session.access_token);
+        }
+      } else {
+        sessionStorage.removeItem("satyascan_session");
+        sessionStorage.removeItem("satyascan_auth_token");
+      }
+    } catch {}
+  }
   authListeners.forEach((fn) => {
     try {
       fn(session);
@@ -131,15 +158,32 @@ export async function loginCheckpoint(
 
 export function logout(): void {
   inMemoryAuthToken = null;
+  inMemorySession = null;
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      sessionStorage.removeItem("satyascan_session");
+      sessionStorage.removeItem("satyascan_auth_token");
+    } catch {}
+  }
   notifyAuthChange(null);
 }
 
 export async function getAuthToken(): Promise<string> {
-  return inMemoryAuthToken || "";
+  return getAuthTokenSync() || "";
 }
 
 export function getAuthTokenSync(): string | null {
-  return inMemoryAuthToken;
+  if (inMemoryAuthToken) return inMemoryAuthToken;
+  if (typeof window !== "undefined" && window.sessionStorage) {
+    try {
+      const stored = sessionStorage.getItem("satyascan_auth_token");
+      if (stored) {
+        inMemoryAuthToken = stored;
+        return stored;
+      }
+    } catch {}
+  }
+  return null;
 }
 
 export async function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

@@ -12,7 +12,7 @@ import { CheckpointLoginView } from "../components/CheckpointLoginView";
 import { ScreeningDetail, UserSession } from "../lib/types";
 import {
   getScreeningDetail, checkBackendHealth, HealthStatus,
-  getSession, subscribeAuth, logout
+  getSession, subscribeAuth, logout, getAuthTokenSync
 } from "../lib/api";
 import { ShieldCheck, AlertCircle, Loader2, WifiOff } from "lucide-react";
 
@@ -173,6 +173,7 @@ export default function Home() {
                 {currentTab === "result" && activeCaseData && (
                   <ResultView
                     caseData={activeCaseData}
+                    authToken={session?.access_token || getAuthTokenSync()}
                     onBackToDashboard={() => setCurrentTab("dashboard")}
                   />
                 )}

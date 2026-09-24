@@ -17,14 +17,23 @@ import { mapScreeningResponseToReportViewModel, ReportViewModel } from "../lib/a
 
 interface ResultViewProps {
   caseData: ScreeningDetail;
+  authToken?: string | null;
   onBackToDashboard: () => void;
 }
 
-export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
-  const authToken = getAuthTokenSync();
+export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboard }: ResultViewProps) {
+  const [activeToken, setActiveToken] = useState<string | null>(() => {
+    return propAuthToken || getAuthTokenSync() || null;
+  });
+
+  useEffect(() => {
+    const t = propAuthToken || getAuthTokenSync();
+    if (t) setActiveToken(t);
+  }, [propAuthToken]);
+
   const model: ReportViewModel = useMemo(
-    () => mapScreeningResponseToReportViewModel(caseData, authToken),
-    [caseData, authToken]
+    () => mapScreeningResponseToReportViewModel(caseData, activeToken),
+    [caseData, activeToken]
   );
 
   const [activeTab, setActiveTab] = useState<"executive" | "validation" | "forensics" | "biometrics" | "audit" | "reference">("executive");
@@ -184,9 +193,9 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
   const getFullImageUrl = (path?: string) => {
     if (!path) return null;
     let fullUrl = path.startsWith("http://") || path.startsWith("https://") ? path : `${BACKEND_ROOT_URL}${path}`;
-    if (authToken && !fullUrl.includes("token=")) {
+    if (activeToken && !fullUrl.includes("token=")) {
       const sep = fullUrl.includes("?") ? "&" : "?";
-      fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(authToken)}`;
+      fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(activeToken)}`;
     }
     return fullUrl;
   };
@@ -537,41 +546,107 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 </div>
 
                 <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                  <div className="py-2.5 flex justify-between">
+                  <div className="py-2.5 flex justify-between items-center">
                     <span className="text-slate-500 dark:text-slate-400">Full Name</span>
-                    <span className="font-semibold text-slate-900 dark:text-white">
-                      {model.document.fullName}
-                    </span>
+                    {model.document.discrepancies?.full_name ? (
+                      <div className="text-right">
+                        <span className="font-semibold text-slate-900 dark:text-white block">
+                          {model.document.fullName}
+                        </span>
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">
+                          VIZ: {model.document.discrepancies.full_name.visual} · MRZ: {model.document.discrepancies.full_name.mrz} (MISMATCH)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-semibold text-slate-900 dark:text-white">
+                        {model.document.fullName}
+                      </span>
+                    )}
                   </div>
-                  <div className="py-2.5 flex justify-between">
+                  <div className="py-2.5 flex justify-between items-center">
                     <span className="text-slate-500 dark:text-slate-400">Document Number</span>
-                    <span className="font-mono font-bold text-teal-700 dark:text-teal-400">
-                      {model.document.number}
-                    </span>
+                    {model.document.discrepancies?.document_number ? (
+                      <div className="text-right">
+                        <span className="font-mono font-bold text-teal-700 dark:text-teal-400 block">
+                          {model.document.number}
+                        </span>
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">
+                          VIZ: {model.document.discrepancies.document_number.visual} · MRZ: {model.document.discrepancies.document_number.mrz} (MISMATCH)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-mono font-bold text-teal-700 dark:text-teal-400">
+                        {model.document.number}
+                      </span>
+                    )}
                   </div>
-                  <div className="py-2.5 flex justify-between">
+                  <div className="py-2.5 flex justify-between items-center">
                     <span className="text-slate-500 dark:text-slate-400">Date of Birth</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {model.document.dob}
-                    </span>
+                    {model.document.discrepancies?.date_of_birth ? (
+                      <div className="text-right">
+                        <span className="font-mono text-slate-800 dark:text-slate-200 block">
+                          {model.document.dob}
+                        </span>
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">
+                          VIZ: {model.document.discrepancies.date_of_birth.visual} · MRZ: {model.document.discrepancies.date_of_birth.mrz} (MISMATCH)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-slate-800 dark:text-slate-200">
+                        {model.document.dob}
+                      </span>
+                    )}
                   </div>
-                  <div className="py-2.5 flex justify-between">
+                  <div className="py-2.5 flex justify-between items-center">
                     <span className="text-slate-500 dark:text-slate-400">Nationality</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {model.document.nationality}
-                    </span>
+                    {model.document.discrepancies?.nationality ? (
+                      <div className="text-right">
+                        <span className="font-mono text-slate-800 dark:text-slate-200 block">
+                          {model.document.nationality}
+                        </span>
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">
+                          VIZ: {model.document.discrepancies.nationality.visual} · MRZ: {model.document.discrepancies.nationality.mrz} (MISMATCH)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-slate-800 dark:text-slate-200">
+                        {model.document.nationality}
+                      </span>
+                    )}
                   </div>
-                  <div className="py-2.5 flex justify-between">
+                  <div className="py-2.5 flex justify-between items-center">
                     <span className="text-slate-500 dark:text-slate-400">Date of Expiry</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {model.document.expiry}
-                    </span>
+                    {model.document.discrepancies?.date_of_expiry ? (
+                      <div className="text-right">
+                        <span className="font-mono text-slate-800 dark:text-slate-200 block">
+                          {model.document.expiry}
+                        </span>
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">
+                          VIZ: {model.document.discrepancies.date_of_expiry.visual} · MRZ: {model.document.discrepancies.date_of_expiry.mrz} (MISMATCH)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-slate-800 dark:text-slate-200">
+                        {model.document.expiry}
+                      </span>
+                    )}
                   </div>
-                  <div className="py-2.5 flex justify-between">
+                  <div className="py-2.5 flex justify-between items-center">
                     <span className="text-slate-500 dark:text-slate-400">Sex</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {model.document.sex}
-                    </span>
+                    {model.document.discrepancies?.sex ? (
+                      <div className="text-right">
+                        <span className="font-mono text-slate-800 dark:text-slate-200 block">
+                          {model.document.sex}
+                        </span>
+                        <span className="text-[10px] text-rose-600 dark:text-rose-400 font-mono block">
+                          VIZ: {model.document.discrepancies.sex.visual} · MRZ: {model.document.discrepancies.sex.mrz} (MISMATCH)
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="font-mono text-slate-800 dark:text-slate-200">
+                        {model.document.sex}
+                      </span>
+                    )}
                   </div>
                   <div className="pt-2.5 flex flex-col space-y-1">
                     <div className="flex justify-between items-center">
@@ -646,8 +721,12 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                             <img
                               src={model.face.documentPortraitUrl}
                               alt="Document Portrait"
+                              crossOrigin="anonymous"
                               className="h-full w-auto object-contain"
-                              onError={() => setDocPortraitError(true)}
+                              onError={() => {
+                                console.warn("[SatyaScan Biometrics] Document Portrait failed to load from:", model.face.documentPortraitUrl);
+                                setDocPortraitError(true);
+                              }}
                             />
                           ) : (
                             <div className="flex flex-col items-center justify-center p-2 text-center text-slate-400">
@@ -667,8 +746,12 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                             <img
                               src={model.face.presentedFaceUrl}
                               alt="Presented Face"
+                              crossOrigin="anonymous"
                               className="h-full w-auto object-contain"
-                              onError={() => setPresentedFaceError(true)}
+                              onError={() => {
+                                console.warn("[SatyaScan Biometrics] Presented Face failed to load from:", model.face.presentedFaceUrl);
+                                setPresentedFaceError(true);
+                              }}
                             />
                           ) : (
                             <div className="flex flex-col items-center justify-center p-2 text-center text-slate-400">
@@ -910,8 +993,12 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     <img
                       src={model.forensics.heatmapUrl}
                       alt="Forensic Heatmap"
+                      crossOrigin="anonymous"
                       className="max-h-72 w-auto object-contain rounded border border-slate-300 dark:border-slate-700/60 shadow-sm"
-                      onError={() => setHeatmapError(true)}
+                      onError={() => {
+                        console.warn("[SatyaScan Forensics] Heatmap failed to load from:", model.forensics.heatmapUrl);
+                        setHeatmapError(true);
+                      }}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center p-4 text-center text-slate-400">
@@ -923,6 +1010,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   <img
                     src={getFullImageUrl(caseData.doc_image_url)!}
                     alt="Original Document"
+                    crossOrigin="anonymous"
                     className="max-h-72 w-auto object-contain rounded border border-slate-300 dark:border-slate-700/60 shadow-sm"
                   />
                 ) : (
@@ -1287,8 +1375,12 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                       <img
                         src={model.face.documentPortraitUrl}
                         alt="Document Portrait"
+                        crossOrigin="anonymous"
                         className="h-full w-auto object-contain"
-                        onError={() => setDocPortraitError(true)}
+                        onError={() => {
+                          console.warn("[SatyaScan Biometrics Tab] Document Portrait failed to load from:", model.face.documentPortraitUrl);
+                          setDocPortraitError(true);
+                        }}
                       />
                     ) : (
                       <div className="flex flex-col items-center justify-center p-3 text-center text-slate-400">
@@ -1308,8 +1400,12 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                       <img
                         src={model.face.presentedFaceUrl}
                         alt="Presented Face"
+                        crossOrigin="anonymous"
                         className="h-full w-auto object-contain"
-                        onError={() => setPresentedFaceError(true)}
+                        onError={() => {
+                          console.warn("[SatyaScan Biometrics Tab] Presented Face failed to load from:", model.face.presentedFaceUrl);
+                          setPresentedFaceError(true);
+                        }}
                       />
                     ) : (
                       <div className="flex flex-col items-center justify-center p-3 text-center text-slate-400">

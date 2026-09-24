@@ -14,7 +14,7 @@
  */
 
 import { ScreeningDetail, ExtractedField } from "./types";
-import { BACKEND_ROOT_URL, API_BASE_URL } from "./api";
+import { BACKEND_ROOT_URL, API_BASE_URL, getAuthTokenSync } from "./api";
 
 export interface DocumentViewModel {
   type: string;
@@ -32,6 +32,7 @@ export interface DocumentViewModel {
   qualityVerdict: "GOOD" | "NEEDS_BETTER_IMAGE" | "REJECTED" | string;
   qualityScore: number;
   qualityMessage: string;
+  discrepancies?: Record<string, { visual: string; mrz: string }>;
 }
 
 export interface MRZViewModel {
@@ -150,9 +151,10 @@ export interface ReportViewModel {
 function resolveAssetUrl(path: string | null | undefined, token?: string | null): string | null {
   if (!path) return null;
   let fullUrl = path.startsWith("http://") || path.startsWith("https://") ? path : `${BACKEND_ROOT_URL}${path}`;
-  if (token && !fullUrl.includes("token=")) {
+  const effectiveToken = token || getAuthTokenSync();
+  if (effectiveToken && !fullUrl.includes("token=")) {
     const separator = fullUrl.includes("?") ? "&" : "?";
-    fullUrl = `${fullUrl}${separator}token=${encodeURIComponent(token)}`;
+    fullUrl = `${fullUrl}${separator}token=${encodeURIComponent(effectiveToken)}`;
   }
   return fullUrl;
 }
@@ -456,8 +458,18 @@ export function mapScreeningResponseToReportViewModel(
   const noiseFinding = findings.find((f) => f.technique === "NOISE_RESIDUAL");
   const copyMoveFinding = findings.find((f) => f.technique === "COPY_MOVE");
 
+  // Cross-check rows & Discrepancies
+  const crossCheckRows = buildCrossCheckRows(data.extracted_fields, data.mrz_data);
+  const discrepancies: Record<string, { visual: string; mrz: string }> = {};
+  for (const row of crossCheckRows) {
+    if (row.status === "MISMATCH" && row.visualValue !== "Not available" && row.mrzValue !== "Not available") {
+      discrepancies[row.fieldName] = { visual: row.visualValue, mrz: row.mrzValue };
+    }
+  }
+
   // PDF Download URL with auth token
-  const tokenParam = authToken ? `?token=${encodeURIComponent(authToken)}` : "";
+  const effectiveAuth = authToken || getAuthTokenSync();
+  const tokenParam = effectiveAuth ? `?token=${encodeURIComponent(effectiveAuth)}` : "";
   const pdfDownloadUrl = `${API_BASE_URL}/reports/${data.id}/pdf${tokenParam}`;
 
   return {
@@ -487,6 +499,7 @@ export function mapScreeningResponseToReportViewModel(
         data.quality_assessment?.verdict === "GOOD"
           ? "Document image meets resolution and illumination criteria for automated inspection."
           : "Image resolution or lighting parameters require officer visual verification.",
+      discrepancies,
     },
 
     mrz: {
@@ -539,7 +552,7 @@ export function mapScreeningResponseToReportViewModel(
       findings,
     },
 
-    crossCheckRows: buildCrossCheckRows(data.extracted_fields, data.mrz_data),
+    crossCheckRows,
 
     risk: {
       score: data.risk_score || 0,

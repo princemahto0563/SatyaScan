@@ -120,6 +120,7 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(self), geolocation=(), microphone=()"
+    response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
     # HSTS only when served over HTTPS (prevents breaking local HTTP development)
     if request.url.scheme == "https":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"

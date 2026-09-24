@@ -626,11 +626,8 @@ def get_screening_media(
     if not is_safe:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access to path denied.")
 
-    # Determine media mime type
-    mime = "image/jpeg"
-    if file_path.endswith(".png"):
-        mime = "image/png"
-    elif file_path.endswith(".webp"):
-        mime = "image/webp"
-
-    return FileResponse(file_path, media_type=mime)
+    headers = {
+        "Cross-Origin-Resource-Policy": "cross-origin",
+        "Cache-Control": "private, max-age=3600"
+    }
+    return FileResponse(file_path, media_type=mime, headers=headers)
