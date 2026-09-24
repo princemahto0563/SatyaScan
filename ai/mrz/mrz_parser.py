@@ -76,6 +76,8 @@ class MRZParser:
                 line = "P<IND" + line[4:]
             elif line.startswith("P<1ND") or line.startswith("P<TND") or line.startswith("P<LND"):
                 line = "P<IND" + line[5:]
+            # Clean trailing K misread as chevron directly following given names and preceding filler chevrons
+            line = re.sub(r'<<([A-Z0-9]+)K<', r'<<\1<<', line)
         else:
             # Line 2: find start of 9-char document number followed by digit check
             # Often begins with uppercase letter followed by digits

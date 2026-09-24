@@ -401,17 +401,19 @@ class DocumentClassifier:
         if doc_num_match and ("PASSPORT" in upper_text or mrz_count >= 1):
             indicators.append(f"Standard passport identifier sequence found ({doc_num_match.group(1)})")
 
-        if "TYPE P" in upper_text or re.search(r'\bTYPE\s*[\:\/]?\s*P\b', upper_text):
+        if "TYPE P" in upper_text or re.search(r'\bTYPE\s*[\:\/]?\s*P\b', upper_text) or re.search(r'\bP\s+IND\b', upper_text) or "IDENTITY PAGE" in upper_text:
             indicators.append("ICAO Type 'P' travel document designation found")
 
         # Evidence evaluation:
         # A document qualifies as passport if:
         # 1. At least 1 MRZ line found AND (Passport keyword OR Doc num OR Type P)
         # 2. OR Passport keyword + Issuing state + Doc num
+        # 3. OR Republic of India + Type P / Identity Page
         is_passport = (
             (mrz_count >= 1 and len(indicators) >= 2) or
             (mrz_count >= 2) or
-            ("PASSPORT" in upper_text and ("REPUBLIC" in upper_text or doc_num_match is not None))
+            ("PASSPORT" in upper_text and ("REPUBLIC" in upper_text or doc_num_match is not None)) or
+            ("REPUBLIC OF INDIA" in upper_text and (re.search(r'\bP\s+IND\b', upper_text) or "IDENTITY PAGE" in upper_text or doc_num_match is not None))
         )
 
         confidence = 0.98 if mrz_count >= 2 else 0.90 if is_passport else 0.0

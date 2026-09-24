@@ -515,7 +515,7 @@ class ScreeningOrchestrator:
                     return True
             return False
 
-        canonical_fields = ["document_number", "full_name", "date_of_birth", "nationality", "date_of_expiry", "sex", "document_type"]
+        canonical_fields = ["document_number", "surname", "given_names", "full_name", "date_of_birth", "nationality", "date_of_expiry", "sex", "document_type"]
         field_records = []
         handled_keys = set()
 
@@ -530,8 +530,6 @@ class ScreeningOrchestrator:
                 g_name = extracted_fields_dict.get("given_names", {}).get("value") if extracted_fields_dict.get("given_names") else ""
                 if s_name or g_name:
                     v_info = {"value": f"{g_name} {s_name}".strip(), "confidence": 0.85, "bounding_box": None}
-                    handled_keys.add("surname")
-                    handled_keys.add("given_names")
             elif not v_info and fname == "date_of_birth":
                 v_info = extracted_fields_dict.get("dob")
                 handled_keys.add("dob")

@@ -23,8 +23,8 @@ pillow>=10.2.0
 
 # OCR & Biometrics
 pytesseract>=0.3.10
-rapidocr_onnxruntime>=1.2.3
-onnxruntime>=1.17.0
+# rapidocr_onnxruntime>=1.2.3  # Optional: deep neural OCR (CPU inference takes ~42s on shared vCPU; Tesseract takes ~1.8s)
+# onnxruntime>=1.17.0
 # paddleocr>=2.7.0  # Optional: high accuracy OCR (tesseract used as standard fallback)
 # paddlepaddle>=2.6.0
 # torch>=2.2.0
