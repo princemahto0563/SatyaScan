@@ -165,6 +165,7 @@ def health_check():
         "status": "HEALTHY",
         "service": "SatyaScan Screening Engine",
         "version": settings.VERSION,
+        "commit": os.getenv("RENDER_GIT_COMMIT", "local-dev")[:7],
         "mode": "PROTOTYPE_OPERATIONAL"
     }
 
