@@ -162,12 +162,44 @@ app.include_router(blockchain.router, prefix=api_prefix)
 @app.get("/health", tags=["System"])
 @app.get(f"{settings.API_V1_PREFIX}/health", tags=["System"])
 def health_check():
+    from ai.ocr.ocr_engine import PADDLE_AVAILABLE
     return {
         "status": "HEALTHY",
         "service": "SatyaScan Screening Engine",
         "version": settings.VERSION,
         "commit": os.getenv("RENDER_GIT_COMMIT", "local-dev")[:7],
+        "paddle_available": PADDLE_AVAILABLE,
         "mode": "PROTOTYPE_OPERATIONAL"
+    }
+
+
+@app.get("/diag", tags=["System"])
+def diagnostic_check():
+    import pytesseract
+    import numpy as np
+    import cv2
+    import time
+    from ai.ocr.ocr_engine import PADDLE_AVAILABLE, OCREngine
+
+    dummy = np.full((600, 900, 3), 255, dtype=np.uint8)
+    cv2.putText(dummy, "PASSPORT P<INDSHARMA<<ARJUN", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+    
+    t0 = time.perf_counter()
+    txt = pytesseract.image_to_string(dummy)
+    tess_time = time.perf_counter() - t0
+
+    eng = OCREngine()
+    t1 = time.perf_counter()
+    eng_res = eng.process_image(dummy)
+    eng_time = time.perf_counter() - t1
+
+    return {
+        "paddle_available": PADDLE_AVAILABLE,
+        "paddle_ocr_object": eng._paddle_ocr is not None,
+        "tesseract_only_time": round(tess_time, 3),
+        "engine_process_time": round(eng_time, 3),
+        "engine_used": eng_res.get("engine"),
+        "tesseract_text": txt.strip(),
     }
 
 
