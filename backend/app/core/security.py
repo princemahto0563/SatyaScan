@@ -14,7 +14,7 @@ import io
 import os
 import re
 from PIL import Image
-from fastapi import HTTPException, Security, Depends, status
+from fastapi import HTTPException, Security, Depends, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -104,18 +104,25 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
 
 def get_current_user(
     token_creds: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
+    token_param: Optional[str] = Query(None, alias="token"),
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Validates Bearer JWT token and returns authenticated User model.
-    In strict mode or production, strictly requires Bearer token (rejects missing with HTTP 401).
+    Validates Bearer JWT token (from Authorization header or query parameter 'token')
+    and returns authenticated User model.
+    In strict mode or production, strictly requires valid token (rejects missing with HTTP 401).
     In evaluation prototype mode, falls back to default officer if no token was passed,
     preserving seamless demonstration compatibility.
     Any provided token that is invalid or expired is ALWAYS rejected with HTTP 401.
     """
+    raw_token = None
     if token_creds and token_creds.credentials:
-        token = token_creds.credentials
-        payload = decode_access_token(token)
+        raw_token = token_creds.credentials
+    elif token_param:
+        raw_token = token_param
+
+    if raw_token:
+        payload = decode_access_token(raw_token)
         if not payload or "sub" not in payload:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -104,6 +104,8 @@ class FaceResultSchema(BaseModel):
     quality_reasons: List[str] = []
     pad_status: Optional[str] = "NOT_AVAILABLE"
     pad_reason: Optional[str] = None
+    doc_face_crop_url: Optional[str] = None
+    live_face_crop_url: Optional[str] = None
     disclaimer: str = "Similarity score is a model-derived metric, not a probability."
 
 
@@ -246,6 +248,8 @@ class ScreeningDetailResponse(BaseModel):
     execution_latency_ms: float
     doc_image_url: Optional[str] = None
     live_image_url: Optional[str] = None
+    doc_face_url: Optional[str] = None
+    live_face_url: Optional[str] = None
     ela_heatmap_url: Optional[str] = None
 
     quality_assessment: Dict[str, Any]

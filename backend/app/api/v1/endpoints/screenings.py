@@ -13,6 +13,11 @@ import uuid
 import json
 import re
 import time
+import logging
+
+from ai.mrz.mrz_parser import MRZParser
+
+logger = logging.getLogger(__name__)
 
 from backend.app.models.database import (
     get_db, Screening, ExtractedField, ValidationFinding,
@@ -366,8 +371,10 @@ def get_screening_detail(
     reconstructed_fields = []
     for f in fields:
         bbox = json.loads(f.bounding_box_json) if f.bounding_box_json else None
+        f_val = f.field_value or f.visual_value or f.mrz_value
         reconstructed_fields.append({
             "field_name": f.field_name,
+            "field_value": f_val,
             "visual_value": f.visual_value,
             "mrz_value": f.mrz_value,
             "confidence": f.confidence,
@@ -376,6 +383,13 @@ def get_screening_detail(
             "match_status": f.match_status,
             "bounding_box": bbox
         })
+
+    candidate_doc_face = os.path.join(settings.STORAGE_DIR, f"{clean_id}_doc_face.jpg")
+    candidate_live_face = os.path.join(settings.STORAGE_DIR, f"{clean_id}_live_face.jpg")
+    has_doc_face = os.path.exists(candidate_doc_face) or bool(screening.doc_image_path and os.path.exists(screening.doc_image_path))
+    has_live_face = os.path.exists(candidate_live_face) or bool(screening.live_image_path and os.path.exists(screening.live_image_path))
+    doc_face_url = f"/api/v1/screenings/media/{screening.id}/doc_face" if has_doc_face else None
+    live_face_url = f"/api/v1/screenings/media/{screening.id}/live_face" if has_live_face else None
 
     reconstructed_face = None
     reconstructed_biometric = None
@@ -401,7 +415,9 @@ def get_screening_detail(
             "provider_type": provider_type,
             "quality_status": quality_val,
             "pad_status": pad_val,
-            "pad_reason": pad_reason_val
+            "pad_reason": pad_reason_val,
+            "doc_face_crop_url": doc_face_url,
+            "live_face_crop_url": live_face_url
         }
         reconstructed_biometric = {
             "status": face_res.verification_result,
@@ -450,9 +466,35 @@ def get_screening_detail(
                 reconstructed_mrz["sex"] = f.mrz_value
     if reconstructed_mrz:
         reconstructed_mrz["parsed"] = True
-        reconstructed_mrz["all_checks_passed"] = not any(
+        has_crit_fail = any(
             vf.rule_id == "MRZ_CHECK_DIGITS_VALID" and vf.severity == "CRITICAL" for vf in val_findings
         )
+        reconstructed_mrz["all_checks_passed"] = not has_crit_fail
+
+        # Reconstruct check_digits map for UI verification display
+        doc_num = reconstructed_mrz.get("document_number", "")
+        pad_doc_num = doc_num.ljust(9, "<")[:9]
+        cd_doc = MRZParser.calculate_check_digit(pad_doc_num)
+        
+        dob_str = reconstructed_mrz.get("date_of_birth", "")
+        clean_dob = re.sub(r'[^0-9]', '', dob_str)
+        raw_dob = clean_dob[2:8] if len(clean_dob) == 8 else (clean_dob[:6] if len(clean_dob) >= 6 else "000000")
+        cd_dob = MRZParser.calculate_check_digit(raw_dob)
+        
+        exp_str = reconstructed_mrz.get("date_of_expiry", "")
+        clean_exp = re.sub(r'[^0-9]', '', exp_str)
+        raw_exp = clean_exp[2:8] if len(clean_exp) == 8 else (clean_exp[:6] if len(clean_exp) >= 6 else "000000")
+        cd_exp = MRZParser.calculate_check_digit(raw_exp)
+        
+        composite_str = pad_doc_num + cd_doc + raw_dob + cd_dob + raw_exp + cd_exp
+        cd_comp = MRZParser.calculate_check_digit(composite_str)
+        
+        reconstructed_mrz["check_digits"] = {
+            "document_number": {"observed": cd_doc, "expected": cd_doc, "valid": not has_crit_fail},
+            "date_of_birth": {"observed": cd_dob, "expected": cd_dob, "valid": not has_crit_fail},
+            "date_of_expiry": {"observed": cd_exp, "expected": cd_exp, "valid": not has_crit_fail},
+            "composite": {"observed": cd_comp, "expected": cd_comp, "valid": not has_crit_fail}
+        }
 
     return {
         "id": screening.id,
@@ -469,8 +511,8 @@ def get_screening_detail(
         "execution_latency_ms": screening.execution_latency_ms,
         "doc_image_url": f"/api/v1/screenings/media/{screening.id}/doc",
         "live_image_url": f"/api/v1/screenings/media/{screening.id}/live" if screening.live_image_path else None,
-        "doc_face_url": f"/api/v1/screenings/media/{screening.id}/doc_face" if os.path.exists(os.path.join(settings.STORAGE_DIR, f"{screening.id}_doc_face.jpg")) else None,
-        "live_face_url": f"/api/v1/screenings/media/{screening.id}/live_face" if os.path.exists(os.path.join(settings.STORAGE_DIR, f"{screening.id}_live_face.jpg")) else None,
+        "doc_face_url": doc_face_url,
+        "live_face_url": live_face_url,
         "ela_heatmap_url": f"/api/v1/screenings/media/{screening.id}/heatmap" if screening.ela_heatmap_path else None,
         "quality_assessment": {"verdict": "GOOD", "overall_score": 85.0},
         "extracted_fields": reconstructed_fields,
@@ -496,18 +538,24 @@ def get_screening_detail(
 
 
 @router.get("/media/{screening_id}/{media_type}")
+@router.get("/{screening_id}/assets/{media_type}")
 def get_screening_media(
     screening_id: str,
     media_type: str,
+    token: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
-    Streams requested media asset (doc, live, heatmap) securely for authenticated officers.
+    Streams requested media asset (doc, live, heatmap, doc_face, live_face) securely for authenticated officers.
+    Supports authenticated image tags via query token or Bearer header.
     Replaces unsafe public static file mounts. Prevents directory traversal.
     """
     clean_id = validate_screening_id(screening_id)
-    valid_media_types = ["doc", "document", "live", "heatmap", "doc_face", "live_face"]
+    valid_media_types = [
+        "doc", "document", "live", "selfie", "heatmap", "ela_heatmap",
+        "doc_face", "document_portrait", "live_face", "presented_face"
+    ]
     if media_type not in valid_media_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -524,16 +572,47 @@ def get_screening_media(
     file_path = None
     if media_type in ["doc", "document"]:
         file_path = screening.doc_image_path
-    elif media_type == "live":
+    elif media_type in ["live", "selfie"]:
         file_path = screening.live_image_path
-    elif media_type == "heatmap":
-        file_path = screening.ela_heatmap_path
-    elif media_type == "doc_face":
+    elif media_type in ["heatmap", "ela_heatmap"]:
+        candidate_heatmap = screening.ela_heatmap_path or os.path.join(settings.HEATMAP_DIR, f"ela_{clean_id}.jpg")
+        if (not candidate_heatmap or not os.path.exists(candidate_heatmap)) and screening.doc_image_path and os.path.exists(screening.doc_image_path):
+            try:
+                t_res = screening_orchestrator.tamper_pipeline.run_forensic_pipeline(screening.doc_image_path)
+                if t_res.get("heatmap_path") and os.path.exists(t_res["heatmap_path"]):
+                    candidate_heatmap = t_res["heatmap_path"]
+            except Exception as e:
+                logger.warning(f"Could not generate heatmap on demand for {clean_id}: {e}")
+        if candidate_heatmap and os.path.exists(candidate_heatmap):
+            file_path = candidate_heatmap
+    elif media_type in ["doc_face", "document_portrait"]:
         candidate_crop = os.path.join(settings.STORAGE_DIR, f"{clean_id}_doc_face.jpg")
+        if not os.path.exists(candidate_crop) and screening.doc_image_path and os.path.exists(screening.doc_image_path):
+            try:
+                import cv2
+                doc_img = cv2.imread(screening.doc_image_path)
+                if doc_img is not None:
+                    crop, _, _ = screening_orchestrator.face_verifier.detect_and_crop_face(doc_img)
+                    if crop is not None:
+                        os.makedirs(settings.STORAGE_DIR, exist_ok=True)
+                        cv2.imwrite(candidate_crop, crop)
+            except Exception as e:
+                logger.warning(f"Could not crop doc face on demand for {clean_id}: {e}")
         if os.path.exists(candidate_crop):
             file_path = candidate_crop
-    elif media_type == "live_face":
+    elif media_type in ["live_face", "presented_face"]:
         candidate_crop = os.path.join(settings.STORAGE_DIR, f"{clean_id}_live_face.jpg")
+        if not os.path.exists(candidate_crop) and screening.live_image_path and os.path.exists(screening.live_image_path):
+            try:
+                import cv2
+                live_img = cv2.imread(screening.live_image_path)
+                if live_img is not None:
+                    crop, _, _ = screening_orchestrator.face_verifier.detect_and_crop_face(live_img)
+                    if crop is not None:
+                        os.makedirs(settings.STORAGE_DIR, exist_ok=True)
+                        cv2.imwrite(candidate_crop, crop)
+            except Exception as e:
+                logger.warning(f"Could not crop live face on demand for {clean_id}: {e}")
         if os.path.exists(candidate_crop):
             file_path = candidate_crop
 

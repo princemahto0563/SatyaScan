@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { 
   ShieldAlert, ShieldCheck, Download, CheckCircle2, XCircle, 
   AlertTriangle, Eye, Lock, Layers, UserCheck, UserX,
@@ -11,8 +11,9 @@ import { ScreeningDetail, BlockchainAnchor, BlockchainVerificationResponse } fro
 import { 
   getReportDownloadUrl, verifyAuditChain, anchorAuditChain,
   anchorBlockchainScreening, verifyBlockchainAnchor, BACKEND_ROOT_URL,
-  getReferenceDataset
+  getReferenceDataset, getAuthTokenSync
 } from "../lib/api";
+import { mapScreeningResponseToReportViewModel, ReportViewModel } from "../lib/adapter";
 
 interface ResultViewProps {
   caseData: ScreeningDetail;
@@ -20,8 +21,18 @@ interface ResultViewProps {
 }
 
 export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
+  const authToken = getAuthTokenSync();
+  const model: ReportViewModel = useMemo(
+    () => mapScreeningResponseToReportViewModel(caseData, authToken),
+    [caseData, authToken]
+  );
+
   const [activeTab, setActiveTab] = useState<"executive" | "validation" | "forensics" | "biometrics" | "audit" | "reference">("executive");
   const [forensicView, setForensicView] = useState<"original" | "ela_heatmap">("ela_heatmap");
+  const [docPortraitError, setDocPortraitError] = useState(false);
+  const [presentedFaceError, setPresentedFaceError] = useState(false);
+  const [heatmapError, setHeatmapError] = useState(false);
+
   const [auditVerifyResult, setAuditVerifyResult] = useState<any>(null);
   const [isVerifyingAudit, setIsVerifyingAudit] = useState(false);
   const [blockchainAnchor, setBlockchainAnchor] = useState<BlockchainAnchor | null>(caseData.blockchain_anchor || null);
@@ -31,6 +42,17 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
   const [blockchainError, setBlockchainError] = useState<string | null>(null);
   const [referenceDataset, setReferenceDataset] = useState<any>(null);
   const [selectedPersonId, setSelectedPersonId] = useState<string>("PERSON-001");
+
+  // Reset errors and local states on caseData change to ensure strict screening isolation
+  useEffect(() => {
+    setDocPortraitError(false);
+    setPresentedFaceError(false);
+    setHeatmapError(false);
+    setAuditVerifyResult(null);
+    setBlockchainAnchor(caseData.blockchain_anchor || null);
+    setBlockchainVerifyResult(null);
+    setBlockchainError(null);
+  }, [caseData.id]);
 
   useEffect(() => {
     if (activeTab === "reference" && !referenceDataset) {
@@ -158,83 +180,41 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
     }
   };
 
-  // Helper to resolve full image URLs
+  // Helper to resolve full image URLs with token
   const getFullImageUrl = (path?: string) => {
     if (!path) return null;
-    if (path.startsWith("http://") || path.startsWith("https://")) return path;
-    return `${BACKEND_ROOT_URL}${path}`;
+    let fullUrl = path.startsWith("http://") || path.startsWith("https://") ? path : `${BACKEND_ROOT_URL}${path}`;
+    if (authToken && !fullUrl.includes("token=")) {
+      const sep = fullUrl.includes("?") ? "&" : "?";
+      fullUrl = `${fullUrl}${sep}token=${encodeURIComponent(authToken)}`;
+    }
+    return fullUrl;
   };
 
-  // Helper for document metadata fields with alias support and null checking
+  // Helper for document metadata fields backed by canonical model
   const getFieldVal = (canonicalName: string) => {
-    // 1. Special handling for Full Name
-    if (canonicalName === "full_name") {
-      if (caseData.extracted_fields && caseData.extracted_fields.length > 0) {
-        const fnMatch = caseData.extracted_fields.find(
-          x => x.field_name.toLowerCase() === "full_name" || x.field_name.toLowerCase() === "name"
-        );
-        const val = fnMatch?.visual_value || fnMatch?.mrz_value;
-        if (val && val !== "None" && val !== "null" && String(val).trim() !== "" && String(val).trim() !== "—") {
-          return String(val);
-        }
-        // Try combining surname + given names if available
-        const sMatch = caseData.extracted_fields.find(x => x.field_name.toLowerCase() === "surname");
-        const gMatch = caseData.extracted_fields.find(x => x.field_name.toLowerCase() === "given_names");
-        const sVal = sMatch?.visual_value || sMatch?.mrz_value || "";
-        const gVal = gMatch?.visual_value || gMatch?.mrz_value || "";
-        const combined = `${gVal} ${sVal}`.trim();
-        if (combined && combined !== "None" && combined !== "null" && combined !== "—") {
-          return combined;
-        }
-      }
-      if (caseData.mrz_data?.full_name) {
-        return String(caseData.mrz_data.full_name);
-      }
+    switch (canonicalName) {
+      case "full_name":
+        return model.document.fullName;
+      case "document_number":
+        return model.document.number;
+      case "surname":
+        return model.document.surname;
+      case "given_names":
+        return model.document.givenNames;
+      case "date_of_birth":
+        return model.document.dob;
+      case "nationality":
+        return model.document.nationality;
+      case "date_of_expiry":
+        return model.document.expiry;
+      case "sex":
+        return model.document.sex;
+      case "document_type":
+        return model.document.type;
+      default:
+        return "Not available";
     }
-
-    const aliasMap: Record<string, string[]> = {
-      full_name: ["full_name", "name", "holder_name", "surname", "given_names"],
-      document_number: ["document_number", "passport_number", "doc_number", "document_no", "visa_number"],
-      date_of_birth: ["date_of_birth", "dob", "birth_date"],
-      date_of_expiry: ["date_of_expiry", "expiry_date", "expiry", "expiration_date"],
-      nationality: ["nationality", "country", "issuing_country", "country_code", "nat"],
-      sex: ["sex", "gender"],
-    };
-
-    const targetAliases = aliasMap[canonicalName] || [canonicalName];
-
-    // Check extracted fields
-    if (caseData.extracted_fields && caseData.extracted_fields.length > 0) {
-      for (const alias of targetAliases) {
-        const match = caseData.extracted_fields.find(
-          x => x.field_name.toLowerCase() === alias.toLowerCase()
-        );
-        if (match) {
-          const val = match.visual_value || match.mrz_value;
-          if (val && val !== "None" && val !== "null" && String(val).trim() !== "" && String(val).trim() !== "—") {
-            return String(val);
-          }
-        }
-      }
-    }
-
-    // Check parsed mrz_data
-    if (caseData.mrz_data) {
-      const mrz = caseData.mrz_data as Record<string, any>;
-      for (const alias of targetAliases) {
-        const mrzVal = mrz[alias];
-        if (mrzVal && mrzVal !== "None" && mrzVal !== "null" && String(mrzVal).trim() !== "") {
-          return String(mrzVal);
-        }
-      }
-    }
-
-    // Check masked_document_id if searching document_number
-    if (canonicalName === "document_number" && caseData.masked_document_id) {
-      return caseData.masked_document_id;
-    }
-
-    return "—";
   };
 
   // Document validation calculations
@@ -513,46 +493,27 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
                       1. Document Information
                     </h3>
-                    {(() => {
-                      const ocrSt = caseData.ocr_status || (
-                        caseData.extracted_fields && caseData.extracted_fields.length > 0
-                          ? (caseData.extracted_fields.some(f => f.visual_value) ? "SUCCESS" : "PARTIAL")
-                          : (caseData.mrz_data?.parsed ? "PARTIAL" : "FAILED")
-                      );
-                      const isSuccess = ocrSt === "SUCCESS";
-                      const isPartial = ocrSt === "PARTIAL";
-                      return (
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                          isSuccess
-                            ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
-                            : isPartial
-                            ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
-                            : "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
-                        }`} title={`OCR Engine: ${caseData.ocr_engine || "PaddleOCR + Tesseract"}`}>
-                          OCR: {ocrSt}
-                        </span>
-                      );
-                    })()}
+                    {/* OCR Status Badge */}
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
+                      model.document.ocrStatus === "SUCCESS"
+                        ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
+                        : model.document.ocrStatus === "PARTIAL"
+                        ? "bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+                        : "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
+                    }`} title={`OCR Engine: ${model.document.ocrEngine}`}>
+                      OCR: {model.document.ocrStatus}
+                    </span>
 
                     {/* MRZ Status Badge */}
-                    {caseData.mrz_data?.parsed ? (
-                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                        caseData.mrz_data?.all_checks_passed
-                          ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
-                          : "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800"
-                      }`} title="ICAO Doc 9303 7-3-1 Modulus 10 Check Digits">
-                        MRZ: {caseData.mrz_data?.all_checks_passed ? "7-3-1 PASS" : "CHECKSUM FAIL"}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                        MRZ: N/A
-                      </span>
-                    )}
+                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded font-mono border ${model.mrz.statusColor}`}
+                      title={model.mrz.applicable ? "ICAO Doc 9303 7-3-1 Modulus 10 Check Digits" : "MRZ Not Applicable"}>
+                      MRZ: {model.mrz.statusBadge}
+                    </span>
 
                     {/* VIZ ↔ MRZ Cross-Check Badge */}
                     {(() => {
-                      const hasDiscrepancy = caseData.extracted_fields?.some(f => f.match_status === "MISMATCH");
-                      const hasMatch = caseData.extracted_fields?.some(f => f.match_status === "MATCH");
+                      const hasDiscrepancy = model.crossCheckRows.some(r => r.status === "MISMATCH");
+                      const hasMatch = model.crossCheckRows.some(r => r.status === "MATCH");
                       if (hasDiscrepancy) {
                         return (
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border border-rose-300 dark:border-rose-800" title="Discrepancy between Visual Zone and MRZ record">
@@ -571,7 +532,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   </div>
 
                   <span className="font-mono text-[11px] rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-slate-700 dark:text-slate-300 font-semibold">
-                    {caseData.document_type}
+                    {model.document.type}
                   </span>
                 </div>
 
@@ -579,31 +540,37 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   <div className="py-2.5 flex justify-between">
                     <span className="text-slate-500 dark:text-slate-400">Full Name</span>
                     <span className="font-semibold text-slate-900 dark:text-white">
-                      {getFieldVal("full_name")}
+                      {model.document.fullName}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
                     <span className="text-slate-500 dark:text-slate-400">Document Number</span>
                     <span className="font-mono font-bold text-teal-700 dark:text-teal-400">
-                      {getFieldVal("document_number")}
+                      {model.document.number}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
                     <span className="text-slate-500 dark:text-slate-400">Date of Birth</span>
                     <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {getFieldVal("date_of_birth")}
+                      {model.document.dob}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
                     <span className="text-slate-500 dark:text-slate-400">Nationality</span>
                     <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {caseData.mrz_data?.nationality || getFieldVal("nationality") || "IND"}
+                      {model.document.nationality}
                     </span>
                   </div>
                   <div className="py-2.5 flex justify-between">
                     <span className="text-slate-500 dark:text-slate-400">Date of Expiry</span>
                     <span className="font-mono text-slate-800 dark:text-slate-200">
-                      {getFieldVal("date_of_expiry")}
+                      {model.document.expiry}
+                    </span>
+                  </div>
+                  <div className="py-2.5 flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">Sex</span>
+                    <span className="font-mono text-slate-800 dark:text-slate-200">
+                      {model.document.sex}
                     </span>
                   </div>
                   <div className="pt-2.5 flex flex-col space-y-1">
@@ -675,14 +642,18 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                           Document Portrait
                         </span>
                         <div className="h-32 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                          {caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url ? (
+                          {model.face.documentPortraitUrl && !docPortraitError ? (
                             <img
-                              src={getFullImageUrl(caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url)!}
+                              src={model.face.documentPortraitUrl}
                               alt="Document Portrait"
                               className="h-full w-auto object-contain"
+                              onError={() => setDocPortraitError(true)}
                             />
                           ) : (
-                            <span className="text-xs text-slate-400">Portrait Unavailable</span>
+                            <div className="flex flex-col items-center justify-center p-2 text-center text-slate-400">
+                              <UserX className="w-5 h-5 mb-1 opacity-50" />
+                              <span className="text-[10px] font-medium">Portrait Unavailable</span>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -692,14 +663,18 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                           Presented Face (Camera Capture)
                         </span>
                         <div className="h-32 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                          {caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url ? (
+                          {model.face.presentedFaceUrl && !presentedFaceError ? (
                             <img
-                              src={getFullImageUrl(caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url)!}
+                              src={model.face.presentedFaceUrl}
                               alt="Presented Face"
                               className="h-full w-auto object-contain"
+                              onError={() => setPresentedFaceError(true)}
                             />
                           ) : (
-                            <span className="text-xs text-slate-400">Live Face Not Captured</span>
+                            <div className="flex flex-col items-center justify-center p-2 text-center text-slate-400">
+                              <UserX className="w-5 h-5 mb-1 opacity-50" />
+                              <span className="text-[10px] font-medium">Live Face Not Captured</span>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -930,12 +905,20 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
               </div>
 
               <div className="relative rounded overflow-hidden border border-slate-300 dark:border-slate-800 bg-slate-200/60 dark:bg-slate-950 flex items-center justify-center min-h-[220px] p-2">
-                {forensicView === "ela_heatmap" && caseData.ela_heatmap_url ? (
-                  <img
-                    src={getFullImageUrl(caseData.ela_heatmap_url)!}
-                    alt="Forensic Heatmap"
-                    className="max-h-72 w-auto object-contain rounded border border-slate-300 dark:border-slate-700/60 shadow-sm"
-                  />
+                {forensicView === "ela_heatmap" ? (
+                  model.forensics.heatmapUrl && !heatmapError ? (
+                    <img
+                      src={model.forensics.heatmapUrl}
+                      alt="Forensic Heatmap"
+                      className="max-h-72 w-auto object-contain rounded border border-slate-300 dark:border-slate-700/60 shadow-sm"
+                      onError={() => setHeatmapError(true)}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center p-4 text-center text-slate-400">
+                      <Layers className="w-8 h-8 mb-1.5 opacity-50 text-slate-400" />
+                      <span className="text-xs font-medium">Forensic Heatmap Unavailable</span>
+                    </div>
+                  )
                 ) : caseData.doc_image_url ? (
                   <img
                     src={getFullImageUrl(caseData.doc_image_url)!}
@@ -955,8 +938,8 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   Error Level Analysis (ELA)
                 </span>
                 <div className="mt-1 text-lg font-bold font-mono text-teal-700 dark:text-teal-400">
-                  {caseData.tamper_summary?.signals?.ela?.anomaly_score ?? 15.0}
-                  <span className="text-[11px] text-slate-400 font-normal"> / 100</span>
+                  {model.forensics.elaScore !== null ? model.forensics.elaScore : "Not available"}
+                  {model.forensics.elaScore !== null && <span className="text-[11px] text-slate-400 font-normal"> / 100</span>}
                 </div>
                 <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                   {caseData.tamper_summary?.signals?.ela?.interpretation || "Compression baseline uniform."}
@@ -968,8 +951,8 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   Sensor Noise Residual
                 </span>
                 <div className="mt-1 text-lg font-bold font-mono text-cyan-700 dark:text-cyan-400">
-                  {caseData.tamper_summary?.signals?.noise_residual?.anomaly_score ?? 20.0}
-                  <span className="text-[11px] text-slate-400 font-normal"> / 100</span>
+                  {model.forensics.noiseScore !== null ? model.forensics.noiseScore : "Not available"}
+                  {model.forensics.noiseScore !== null && <span className="text-[11px] text-slate-400 font-normal"> / 100</span>}
                 </div>
                 <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                   {caseData.tamper_summary?.signals?.noise_residual?.interpretation || "Sensor noise distribution homogeneous."}
@@ -981,8 +964,8 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   Copy-Move Duplication Check
                 </span>
                 <div className="mt-1 text-lg font-bold font-mono text-purple-700 dark:text-purple-400">
-                  {caseData.tamper_summary?.signals?.copy_move?.matches_found ?? 0}
-                  <span className="text-[11px] text-slate-400 font-normal"> matches</span>
+                  {model.forensics.copyMoveMatches !== null ? model.forensics.copyMoveMatches : "Not available"}
+                  {model.forensics.copyMoveMatches !== null && <span className="text-[11px] text-slate-400 font-normal"> matches</span>}
                 </div>
                 <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                   {caseData.tamper_summary?.signals?.copy_move?.observation || "No repeated visual elements detected."}
@@ -1111,9 +1094,9 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
               Mathematical checksum verification across encoded date and document number fields.
             </p>
 
-            {caseData.mrz_data?.check_digits ? (
+            {Object.keys(model.mrz.checkDigits).length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-                {Object.entries(caseData.mrz_data.check_digits).map(([key, item]) => (
+                {Object.entries(model.mrz.checkDigits).map(([key, item]) => (
                   <div key={key} className="rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 p-2.5 text-xs font-mono">
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase block">
                       {key.replace(/_/g, " ")}
@@ -1130,7 +1113,9 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-slate-500">Check digits not applicable or unparsed.</p>
+              <p className="text-xs text-slate-500">
+                {model.mrz.applicable ? "Check digits unparsed or not available." : "Check digits not applicable for this document type."}
+              </p>
             )}
           </div>
 
@@ -1140,7 +1125,7 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                 Visual Zone (VIZ) vs Machine Readable Zone (MRZ) Cross-Check
               </span>
               <span className="text-[11px] text-slate-500 font-mono">
-                {caseData.extracted_fields.length} Fields Verified
+                {model.crossCheckRows.length} Fields Verified
               </span>
             </div>
 
@@ -1156,36 +1141,36 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                  {caseData.extracted_fields.map((field, idx) => (
+                  {model.crossCheckRows.map((row, idx) => (
                     <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
                       <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">
-                        {field.field_name.replace(/_/g, " ").toUpperCase()}
+                        {row.displayName}
                       </td>
                       <td className="px-4 py-3 font-mono text-slate-800 dark:text-slate-200">
-                        {field.visual_value || "—"}
+                        {row.visualValue}
                       </td>
                       <td className="px-4 py-3 font-mono text-teal-800 dark:text-teal-300">
-                        {field.mrz_value || "—"}
+                        {row.mrzValue}
                       </td>
                       <td className="px-3 py-3 font-mono text-slate-500">
-                        {(field.confidence * 100).toFixed(0)}%
+                        {(row.confidence * 100).toFixed(0)}%
                       </td>
                       <td className="px-4 py-3">
-                        {field.match_status === "MATCH" ? (
+                        {row.status === "MATCH" ? (
                           <span className="inline-flex items-center space-x-1 text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             <span>Match</span>
                           </span>
-                        ) : field.match_status === "MISMATCH" ? (
+                        ) : row.status === "MISMATCH" ? (
                           <span className="inline-flex items-center space-x-1 text-rose-700 dark:text-rose-400 font-bold text-[11px]">
                             <XCircle className="h-3.5 w-3.5" />
                             <span>Discrepancy</span>
                           </span>
-                        ) : field.match_status === "VIZ_ONLY" ? (
+                        ) : row.status === "VIZ_ONLY" ? (
                           <span className="inline-flex items-center space-x-1 text-slate-600 dark:text-slate-400 font-medium text-[11px]">
                             <span>VIZ Only</span>
                           </span>
-                        ) : field.match_status === "MRZ_ONLY" ? (
+                        ) : row.status === "MRZ_ONLY" ? (
                           <span className="inline-flex items-center space-x-1 text-teal-600 dark:text-teal-400 font-medium text-[11px]">
                             <span>MRZ Only</span>
                           </span>
@@ -1298,14 +1283,18 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     Document Portrait
                   </span>
                   <div className="h-44 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                    {caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url ? (
+                    {model.face.documentPortraitUrl && !docPortraitError ? (
                       <img
-                        src={getFullImageUrl(caseData.doc_face_url || caseData.face_result?.doc_face_crop_url || caseData.doc_image_url)!}
+                        src={model.face.documentPortraitUrl}
                         alt="Document Portrait"
                         className="h-full w-auto object-contain"
+                        onError={() => setDocPortraitError(true)}
                       />
                     ) : (
-                      <span className="text-xs text-slate-400">Portrait Unavailable</span>
+                      <div className="flex flex-col items-center justify-center p-3 text-center text-slate-400">
+                        <UserX className="w-6 h-6 mb-1 opacity-50" />
+                        <span className="text-xs">Portrait Unavailable</span>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1315,14 +1304,18 @@ export function ResultView({ caseData, onBackToDashboard }: ResultViewProps) {
                     Presented Face (Camera Capture)
                   </span>
                   <div className="h-44 w-auto mx-auto rounded overflow-hidden flex items-center justify-center bg-slate-200 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-sm">
-                    {caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url ? (
+                    {model.face.presentedFaceUrl && !presentedFaceError ? (
                       <img
-                        src={getFullImageUrl(caseData.live_face_url || caseData.face_result?.live_face_crop_url || caseData.live_image_url)!}
+                        src={model.face.presentedFaceUrl}
                         alt="Presented Face"
                         className="h-full w-auto object-contain"
+                        onError={() => setPresentedFaceError(true)}
                       />
                     ) : (
-                      <span className="text-xs text-slate-400">Live Face Not Captured</span>
+                      <div className="flex flex-col items-center justify-center p-3 text-center text-slate-400">
+                        <UserX className="w-6 h-6 mb-1 opacity-50" />
+                        <span className="text-xs">Live Face Not Captured</span>
+                      </div>
                     )}
                   </div>
                 </div>
