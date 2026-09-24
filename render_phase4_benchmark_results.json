@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-09-24 10:54:05 UTC",
+  "health": {
+    "status": "HEALTHY",
+    "service": "SatyaScan Screening Engine",
+    "version": "1.0.5-phase4-optimized",
+    "commit": "137fcbf",
+    "paddle_available": false,
+    "mode": "PROTOTYPE_OPERATIONAL"
+  },
+  "diagnostic": {
+    "paddle_available": false,
+    "rapid_available": false,
+    "primary_ocr_object": false,
+    "tesseract_only_time": 1.773,
+    "engine_process_time": 3.313,
+    "engine_used": "Tesseract",
+    "tesseract_text": "PASSPORT P<INDSHARMA<<ARJUN\n\nP<INDSHARMA<<ARIUNKK<<<<<<<<<<<cccceccececcss\n\nZ1234567<1IND9205141M2805139<<<<<<<<<<cecxs2",
+    "total_lines": 3,
+    "mrz_lines_count": 3,
+    "fields_extracted": 2
+  },
+  "case01_warm": {
+    "round_trip_seconds": 7.415344333043322,
+    "server_timing": {
+      "files_time": 0.001,
+      "class_time": 5.038,
+      "proc_time": 1.612,
+      "total_server_time": 6.652
+    },
+    "engine": "Tesseract",
+    "status": "COMPLETED",
+    "risk_score": 13.5,
+    "risk_band": "LOW",
+    "face_similarity": 0.9571,
+    "mrz_valid": true,
+    "extracted_fields_count": 9
+  },
+  "case09_warm": {
+    "round_trip_seconds": 7.2995024169795215,
+    "server_timing": {
+      "files_time": 0.001,
+      "class_time": 5.194,
+      "proc_time": 1.416,
+      "total_server_time": 6.611
+    },
+    "engine": "Tesseract",
+    "status": "MANUAL_REVIEW_REQUIRED",
+    "risk_score": 42.9,
+    "risk_band": "MEDIUM",
+    "face_similarity": 0.0796,
+    "face_verdict": "VERIFIED MISMATCH"
+  },
+  "concurrency": {
+    "total_health_pings": 8,
+    "successful_pings": 8,
+    "error_pings": 0,
+    "avg_ping_latency_ms": 361.3
+  }
+}

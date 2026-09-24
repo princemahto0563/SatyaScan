@@ -34,7 +34,8 @@ const getBaseUrl = (): string => {
 export const API_BASE_URL = getBaseUrl();
 export const BACKEND_ROOT_URL = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
 
-const TIMEOUT_MS = 120000;
+// Reduced from 120s down to 30s following Phase 4 OCR performance optimization (warm screenings complete in ~6.6s - 7.4s)
+const TIMEOUT_MS = 30000;
 
 // IN-MEMORY AUTHENTICATION STATE: Protects against XSS token exfiltration
 let inMemoryAuthToken: string | null = null;
