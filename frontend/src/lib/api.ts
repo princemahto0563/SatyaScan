@@ -406,22 +406,25 @@ export async function verifyBlockchainAnchor(screeningId: string): Promise<Block
 }
 
 export function getReportDownloadUrl(screeningId: string): string {
-  const token = inMemoryAuthToken ? `?token=${encodeURIComponent(inMemoryAuthToken)}` : "";
+  const t = getAuthTokenSync();
+  const token = t ? `?token=${encodeURIComponent(t)}` : "";
   return `${API_BASE_URL}/reports/${screeningId}/pdf${token}`;
 }
 
 export function getFullImageUrl(path?: string | null): string | null {
   if (!path) return null;
   let url = path.startsWith("http://") || path.startsWith("https://") ? path : `${BACKEND_ROOT_URL}${path}`;
-  if (inMemoryAuthToken && !url.includes("token=")) {
+  const t = getAuthTokenSync();
+  if (t && !url.includes("token=")) {
     const separator = url.includes("?") ? "&" : "?";
-    url = `${url}${separator}token=${encodeURIComponent(inMemoryAuthToken)}`;
+    url = `${url}${separator}token=${encodeURIComponent(t)}`;
   }
   return url;
 }
 
 export function getMediaUrl(screeningId: string, type: "doc" | "live" | "heatmap"): string {
-  const token = inMemoryAuthToken ? `?token=${encodeURIComponent(inMemoryAuthToken)}` : "";
+  const t = getAuthTokenSync();
+  const token = t ? `?token=${encodeURIComponent(t)}` : "";
   return `${API_BASE_URL}/screenings/media/${screeningId}/${type}${token}`;
 }
 

@@ -2,7 +2,7 @@
 // PRIVACY BY DESIGN: Strictly caches UI application shell assets only.
 // NEVER caches sensitive biometrics, document photos, selfies, heatmaps, reports, or API responses.
 
-const CACHE_NAME = "satyascan-v1";
+const CACHE_NAME = "satyascan-v2";
 const STATIC_ASSETS = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -45,7 +45,21 @@ self.addEventListener("fetch", (event) => {
     return; // Pass through directly to network/backend; zero offline biometric storage
   }
 
-  // Only serve cached static UI shell assets (HTML, JS, CSS, SVG icons)
+  // Network-First for HTML navigation to ensure fresh application updates
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-First for static hashed assets
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       return cachedResponse || fetch(event.request);
