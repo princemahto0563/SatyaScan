@@ -34,7 +34,7 @@ const getBaseUrl = (): string => {
 export const API_BASE_URL = getBaseUrl();
 export const BACKEND_ROOT_URL = API_BASE_URL.replace(/\/api\/v1\/?$/, "");
 
-const TIMEOUT_MS = 60000;
+const TIMEOUT_MS = 120000;
 
 // IN-MEMORY AUTHENTICATION STATE: Protects against XSS token exfiltration
 let inMemoryAuthToken: string | null = null;
@@ -221,7 +221,7 @@ async function extractErrorMessage(res: Response): Promise<string> {
 function handleFetchError(err: any): never {
   if (err.name === "AbortError") {
     throw new Error(
-      "Screening timed out after 60 seconds. The backend may still be processing this case. Please retry or inspect the case status."
+      "Screening timed out after 120 seconds. The backend may still be processing this case. Please retry or inspect the case status."
     );
   }
   if (err instanceof TypeError && (err.message === "Failed to fetch" || err.message.includes("fetch"))) {
