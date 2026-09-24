@@ -20,6 +20,16 @@ except Exception:
     PADDLE_AVAILABLE = False
 
 
+_SHARED_OCR_ENGINE = None
+
+def get_shared_ocr_engine():
+    global _SHARED_OCR_ENGINE
+    if _SHARED_OCR_ENGINE is None:
+        from ai.ocr.ocr_engine import OCREngine
+        _SHARED_OCR_ENGINE = OCREngine()
+    return _SHARED_OCR_ENGINE
+
+
 class DocumentClassifier:
     """
     Deterministic document classifier gate that inspects image characteristics,
@@ -36,21 +46,33 @@ class DocumentClassifier:
         "Please provide a clearer, well-lit image of a valid Passport or Visa."
     )
 
-    def __init__(self):
+    def __init__(self, ocr_engine: Optional[Any] = None):
+        self._ocr_engine = ocr_engine if ocr_engine is not None else get_shared_ocr_engine()
         self._paddle_ocr = None
-        self._initialized = False
+        self._initialized = True
 
     def _init_ocr(self):
         if self._initialized:
             return
+        if self._ocr_engine is not None:
+            self._initialized = True
+            return
         if PADDLE_AVAILABLE:
             try:
-                self._paddle_ocr = PaddleOCR(use_angle_cls=False, lang='en')
+                self._paddle_ocr = PaddleOCR(
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    lang='en'
+                )
             except Exception:
-                self._paddle_ocr = None
+                try:
+                    self._paddle_ocr = PaddleOCR(use_angle_cls=False, lang='en')
+                except Exception:
+                    self._paddle_ocr = None
         self._initialized = True
 
-    def classify_image(self, image_input: Any) -> Dict[str, Any]:
+    def classify_image(self, image_input: Any, ocr_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Classifies input image into:
         - PASSPORT (Supported)
@@ -64,6 +86,8 @@ class DocumentClassifier:
         - BLANK_IMAGE (Explicitly Rejected)
         - UNSUPPORTED_DOCUMENT (Explicitly Rejected)
         - UNABLE_TO_CLASSIFY (Rejected — Inconclusive)
+        
+        Supports pre-computed ocr_result to eliminate duplicate PaddleOCR inferences (Phase 2A).
         """
         # 1. Decode image to numpy BGR array
         if isinstance(image_input, str):
@@ -78,7 +102,8 @@ class DocumentClassifier:
                 "confidence": 0.0,
                 "indicators": ["Invalid image input type"],
                 "message": self.REJECTION_MESSAGE,
-                "raw_text": ""
+                "raw_text": "",
+                "ocr_result": None
             }
 
         if cv_img is None or cv_img.size == 0:
@@ -89,7 +114,8 @@ class DocumentClassifier:
                 "confidence": 0.0,
                 "indicators": ["Unable to decode image bytes"],
                 "message": self.REJECTION_MESSAGE,
-                "raw_text": ""
+                "raw_text": "",
+                "ocr_result": None
             }
 
         # 2. Check for Blank / Monochrome Image
@@ -105,17 +131,33 @@ class DocumentClassifier:
                 "confidence": 0.99,
                 "indicators": [f"Image has negligible visual variance (std_dev={std_dev:.2f})"],
                 "message": self.REJECTION_MESSAGE,
-                "raw_text": ""
+                "raw_text": "",
+                "ocr_result": None
             }
 
-        # 3. Extract Text Tokens for Classification
-        raw_text, ocr_lines = self._extract_text(cv_img)
+        # 3. Extract Text Tokens for Classification (reusing shared OCR result when available)
+        shared_ocr_result: Optional[Dict[str, Any]] = None
+        if ocr_result is not None:
+            shared_ocr_result = ocr_result
+            ocr_lines = ocr_result.get("lines", [r["text"] for r in ocr_result.get("raw_lines", [])])
+            raw_text = ocr_result.get("raw_text", " ".join(ocr_lines))
+        elif self._ocr_engine is not None:
+            shared_ocr_result = self._ocr_engine.process_image(cv_img)
+            ocr_lines = shared_ocr_result.get("lines", [r["text"] for r in shared_ocr_result.get("raw_lines", [])])
+            raw_text = shared_ocr_result.get("raw_text", " ".join(ocr_lines))
+        else:
+            raw_text, ocr_lines = self._extract_text(cv_img)
+
         upper_text = raw_text.upper()
+
+        def _wrap_res(d: Dict[str, Any]) -> Dict[str, Any]:
+            d["ocr_result"] = shared_ocr_result
+            return d
 
         # 4. Check for Explicitly Rejected Indian / Domestic Documents FIRST
         rejection_match = self._check_unsupported_patterns(upper_text, raw_text)
         if rejection_match:
-            return {
+            return _wrap_res({
                 "verdict": "UNSUPPORTED_DOCUMENT",
                 "detected_type": rejection_match["detected_type"],
                 "is_supported": False,
@@ -123,7 +165,7 @@ class DocumentClassifier:
                 "indicators": rejection_match["indicators"],
                 "message": self.REJECTION_MESSAGE,
                 "raw_text": raw_text[:500]
-            }
+            })
 
         # 5. Check for VISA & PASSPORT Indicators
         visa_match = self._check_visa_patterns(upper_text, ocr_lines)
@@ -143,7 +185,7 @@ class DocumentClassifier:
         # But genuine Passports do not have Visa headers, Visa Categories, Stay Durations, or Entry conditions.
         if visa_match["detected"] and passport_match["detected"]:
             if has_genuine_passport_mrz and len(visa_match["indicators"]) < 3:
-                return {
+                return _wrap_res({
                     "verdict": "PASSPORT",
                     "detected_type": "PASSPORT",
                     "is_supported": True,
@@ -151,9 +193,9 @@ class DocumentClassifier:
                     "indicators": passport_match["indicators"],
                     "message": "Valid passport layout detected.",
                     "raw_text": raw_text[:500]
-                }
+                })
             else:
-                return {
+                return _wrap_res({
                     "verdict": "VISA",
                     "detected_type": "VISA",
                     "is_supported": True,
@@ -161,10 +203,10 @@ class DocumentClassifier:
                     "indicators": visa_match["indicators"],
                     "message": "Valid visa vignette detected.",
                     "raw_text": raw_text[:500]
-                }
+                })
 
         if passport_match["detected"]:
-            return {
+            return _wrap_res({
                 "verdict": "PASSPORT",
                 "detected_type": "PASSPORT",
                 "is_supported": True,
@@ -172,10 +214,10 @@ class DocumentClassifier:
                 "indicators": passport_match["indicators"],
                 "message": "Valid passport layout detected.",
                 "raw_text": raw_text[:500]
-            }
+            })
 
         if visa_match["detected"]:
-            return {
+            return _wrap_res({
                 "verdict": "VISA",
                 "detected_type": "VISA",
                 "is_supported": True,
@@ -183,12 +225,12 @@ class DocumentClassifier:
                 "indicators": visa_match["indicators"],
                 "message": "Valid visa vignette detected.",
                 "raw_text": raw_text[:500]
-            }
+            })
 
         # 7. If neither Passport nor Visa could be reliably established
         # If too little text was found or completely unrelated
         if len(ocr_lines) < 2 or len(upper_text.strip()) < 20:
-            return {
+            return _wrap_res({
                 "verdict": "UNABLE_TO_CLASSIFY",
                 "detected_type": "RANDOM_OR_UNREADABLE",
                 "is_supported": False,
@@ -196,9 +238,9 @@ class DocumentClassifier:
                 "indicators": ["Insufficient readable textual or structural markers"],
                 "message": self.UNABLE_TO_CLASSIFY_MESSAGE,
                 "raw_text": raw_text[:500]
-            }
+            })
 
-        return {
+        return _wrap_res({
             "verdict": "UNSUPPORTED_DOCUMENT",
             "detected_type": "OTHER_DOCUMENT",
             "is_supported": False,
@@ -206,10 +248,16 @@ class DocumentClassifier:
             "indicators": ["Unrecognized document schema (not a Passport or Visa)"],
             "message": self.REJECTION_MESSAGE,
             "raw_text": raw_text[:500]
-        }
+        })
 
     def _extract_text(self, cv_img: np.ndarray) -> tuple[str, List[str]]:
-        """Fast text extraction using PaddleOCR with Tesseract fallback."""
+        """Fast text extraction using shared OCREngine with fallback."""
+        if self._ocr_engine is not None:
+            res = self._ocr_engine.process_image(cv_img)
+            lines = res.get("lines", [r["text"] for r in res.get("raw_lines", [])])
+            raw_text = res.get("raw_text", " ".join(lines))
+            return raw_text, lines
+
         self._init_ocr()
         lines: List[str] = []
 

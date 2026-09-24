@@ -37,11 +37,19 @@ class OCREngine:
             return
         if PADDLE_AVAILABLE:
             try:
-                # Initialize PaddleOCR CPU inference
-                self._paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en')
-            except Exception as e:
-                print(f"[SatyaScan OCR] PaddleOCR init warning: {e}, falling back to Tesseract.")
-                self._paddle_ocr = None
+                # Initialize PaddleOCR CPU inference without heavy unneeded unwarping/doc-orientation models
+                self._paddle_ocr = PaddleOCR(
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                    lang='en'
+                )
+            except Exception:
+                try:
+                    self._paddle_ocr = PaddleOCR(use_angle_cls=False, lang='en')
+                except Exception as e:
+                    print(f"[SatyaScan OCR] PaddleOCR init warning: {e}, falling back to Tesseract.")
+                    self._paddle_ocr = None
         self._initialized = True
 
     def process_image(self, image_input: Any) -> Dict[str, Any]:
@@ -77,13 +85,29 @@ class OCREngine:
 
         self._init_paddle()
 
+        # Bounded working resolution for OCR (caps decompression-bomb/massive phone uploads to 1200px)
+        MAX_OCR_DIM = 1200
+        h, w = cv_img.shape[:2]
+        max_dim = max(h, w)
+        if max_dim > MAX_OCR_DIM:
+            scale = MAX_OCR_DIM / float(max_dim)
+            ocr_w = int(w * scale)
+            ocr_h = int(h * scale)
+            ocr_input = cv2.resize(cv_img, (ocr_w, ocr_h), interpolation=cv2.INTER_AREA)
+        else:
+            ocr_input = cv_img
+            scale = 1.0
+
         raw_items: List[Dict[str, Any]] = []
         actual_engine: Optional[str] = None
 
         # PRIMARY: Attempt PaddleOCR first if initialized
         if self._paddle_ocr:
             try:
-                results = self._paddle_ocr.ocr(cv_img)
+                if hasattr(self._paddle_ocr, 'predict'):
+                    results = list(self._paddle_ocr.predict(ocr_input))
+                else:
+                    results = self._paddle_ocr.ocr(ocr_input)
                 if results and len(results) > 0 and results[0] is not None:
                     res0 = results[0]
                     # Handle modern PaddleX OCRResult dict-like structure
@@ -94,6 +118,8 @@ class OCREngine:
                         for i, txt in enumerate(texts):
                             sc = float(scores[i]) if i < len(scores) else 0.95
                             bx = polys[i].tolist() if i < len(polys) and hasattr(polys[i], 'tolist') else (polys[i] if i < len(polys) else [])
+                            if scale != 1.0 and bx:
+                                bx = [[round(pt[0] / scale, 1), round(pt[1] / scale, 1)] for pt in bx]
                             raw_items.append({
                                 "text": str(txt).strip(),
                                 "confidence": round(sc, 4),
@@ -107,6 +133,8 @@ class OCREngine:
                                 text_conf = line[1]
                                 if isinstance(text_conf, (list, tuple)) and len(text_conf) >= 2:
                                     text, conf = text_conf[0], text_conf[1]
+                                    if scale != 1.0 and box:
+                                        box = [[round(pt[0] / scale, 1), round(pt[1] / scale, 1)] for pt in box]
                                     raw_items.append({
                                         "text": str(text).strip(),
                                         "confidence": round(float(conf), 4),

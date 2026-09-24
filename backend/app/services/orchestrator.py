@@ -50,8 +50,8 @@ class ScreeningOrchestrator:
 
     def __init__(self):
         self.quality_gate = DocumentQualityGate()
-        self.document_classifier = DocumentClassifier()
         self.ocr_engine = OCREngine()
+        self.document_classifier = DocumentClassifier(ocr_engine=self.ocr_engine)
         self.tamper_pipeline = TamperForensicsPipeline()
         self.face_verifier = FaceVerifier()
         dim = getattr(getattr(self.face_verifier, "provider", None), "embedding_dim", getattr(self.face_verifier, "EMBEDDING_DIM", 128))
@@ -239,7 +239,8 @@ class ScreeningOrchestrator:
                 operator_id=operator_id,
                 checkpoint_id=checkpoint_id,
                 checkpoint_name=checkpoint_name,
-                quality_res=quality_res
+                quality_res=quality_res,
+                classification_result=class_res
             )
         else:
             return self._execute_passport_pipeline(
@@ -251,7 +252,8 @@ class ScreeningOrchestrator:
                 operator_id=operator_id,
                 checkpoint_id=checkpoint_id,
                 checkpoint_name=checkpoint_name,
-                quality_res=quality_res
+                quality_res=quality_res,
+                classification_result=class_res
             )
 
     def _execute_passport_pipeline(
@@ -264,11 +266,15 @@ class ScreeningOrchestrator:
         operator_id: Optional[int],
         checkpoint_id: Optional[str],
         checkpoint_name: Optional[str],
-        quality_res: Dict[str, Any]
+        quality_res: Dict[str, Any],
+        classification_result: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Dedicated Passport Pipeline: OCR -> TD3 MRZ -> 7-3-1 -> VIZ Cross-Check -> Forensics -> Biometrics -> FAISS."""
-        # 1. OCR Extraction
-        ocr_res = self.ocr_engine.process_image(doc_image_path)
+        # 1. OCR Extraction (Reuses pre-computed classification OCR result if available, preventing duplicate inference)
+        if classification_result and classification_result.get("ocr_result"):
+            ocr_res = classification_result["ocr_result"]
+        else:
+            ocr_res = self.ocr_engine.process_image(doc_image_path)
         actual_engine = ocr_res.get("engine")
         extracted_fields_dict = ocr_res.get("extracted_fields", {})
         AuditService.record_event(
@@ -762,11 +768,15 @@ class ScreeningOrchestrator:
         operator_id: Optional[int],
         checkpoint_id: Optional[str],
         checkpoint_name: Optional[str],
-        quality_res: Dict[str, Any]
+        quality_res: Dict[str, Any],
+        classification_result: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Dedicated Visa Pipeline: OCR -> Visa Field Extraction -> Visa Rule Validation -> Forensics -> Optional Biometrics."""
-        # 1. OCR Extraction
-        ocr_res = self.ocr_engine.process_image(doc_image_path)
+        # 1. OCR Extraction (Reuse if classification already ran OCR on this exact image)
+        if classification_result and classification_result.get("ocr_result"):
+            ocr_res = classification_result["ocr_result"]
+        else:
+            ocr_res = self.ocr_engine.process_image(doc_image_path)
         actual_engine = ocr_res.get("engine")
         raw_lines = ocr_res.get("raw_lines", [])
         AuditService.record_event(
