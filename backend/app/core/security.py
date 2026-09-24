@@ -14,7 +14,7 @@ import io
 import os
 import re
 from PIL import Image
-from fastapi import HTTPException, Security, Depends, status, Query
+from fastapi import HTTPException, Security, Depends, status, Query, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
@@ -103,9 +103,9 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
 # --- Authentication & RBAC Dependencies ---
 
 def get_current_user(
-    request: Request,
     token_creds: Optional[HTTPAuthorizationCredentials] = Security(security_bearer),
     token_param: Optional[str] = Query(None, alias="token"),
+    access_token_param: Optional[str] = Query(None, alias="access_token"),
     db: Session = Depends(get_db)
 ) -> User:
     """
@@ -121,8 +121,8 @@ def get_current_user(
         raw_token = token_creds.credentials
     elif token_param:
         raw_token = token_param
-    elif request and request.query_params.get("access_token"):
-        raw_token = request.query_params.get("access_token")
+    elif access_token_param:
+        raw_token = access_token_param
 
     if raw_token:
         payload = decode_access_token(raw_token)

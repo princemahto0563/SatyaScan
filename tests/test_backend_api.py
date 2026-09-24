@@ -97,6 +97,14 @@ def test_screening_pipeline_execution():
     assert audit_data["is_valid"] is True
     assert audit_data["total_events"] >= 4
 
+    # Verify media asset endpoint with query param token and CORP header
+    from backend.app.core.security import create_access_token
+    token = create_access_token({"sub": "officer", "role": "OFFICER"})
+    media_res = client.get(f"/api/v1/screenings/media/{screening_id}/heatmap?token={token}")
+    assert media_res.status_code == 200
+    assert "image" in media_res.headers.get("content-type", "")
+    assert media_res.headers.get("Cross-Origin-Resource-Policy") == "cross-origin"
+
 
 def test_audit_chain_detects_retroactive_tampering():
     import uuid
