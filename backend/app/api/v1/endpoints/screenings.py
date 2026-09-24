@@ -4,7 +4,7 @@ Handles document uploads, automated screening execution, media retrieval, and ca
 Protected by JWT authentication, RBAC, input validation, and rate limiting.
 """
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, status, Response
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
@@ -12,6 +12,7 @@ import os
 import uuid
 import json
 import re
+import time
 
 from backend.app.models.database import (
     get_db, Screening, ExtractedField, ValidationFinding,
@@ -51,6 +52,7 @@ def validate_screening_id(screening_id: str) -> str:
     dependencies=[Depends(rate_limit_screening)]
 )
 def create_screening(
+    response: Response,
     document_file: UploadFile = File(...),
     live_selfie_file: Optional[UploadFile] = File(None),
     document_type: str = Form("PASSPORT"),
@@ -58,6 +60,7 @@ def create_screening(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    t_start = time.perf_counter()
     """
     Executes automated screening on uploaded travel document and optional live selfie.
     Requires authenticated officer session. Enforces file size, magic header,
@@ -120,8 +123,12 @@ def create_screening(
             f.write(live_bytes)
         del live_bytes
 
+    t_files = time.perf_counter()
+
     # 5. Document Classifier Gate: Independently validate document type BEFORE heavy processing
     classification = screening_orchestrator.document_classifier.classify_image(doc_path)
+    t_class = time.perf_counter()
+
     if not classification.get("is_supported", False):
         try:
             if os.path.exists(doc_path):
@@ -157,6 +164,12 @@ def create_screening(
         checkpoint_name=getattr(current_user, "checkpoint_name", None),
         classification_result=classification
     )
+    t_proc = time.perf_counter()
+
+    response.headers["X-Files-Time"] = f"{t_files - t_start:.3f}"
+    response.headers["X-Class-Time"] = f"{t_class - t_files:.3f}"
+    response.headers["X-Proc-Time"] = f"{t_proc - t_class:.3f}"
+    response.headers["X-Total-Server-Time"] = f"{t_proc - t_start:.3f}"
 
     return result
 
