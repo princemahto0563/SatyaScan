@@ -287,15 +287,37 @@ class ScreeningOrchestrator:
         mrz_res: Dict[str, Any] = {"parsed": False}
 
         if len(mrz_candidates) >= 2:
-            mrz_res = MRZParser.parse_td3(mrz_candidates[-2], mrz_candidates[-1])
+            # First check consecutive candidate pairs
+            for i in range(len(mrz_candidates) - 1):
+                attempt = MRZParser.parse_td3(mrz_candidates[i], mrz_candidates[i+1])
+                if attempt.get("all_checks_passed"):
+                    mrz_res = attempt
+                    break
+                elif attempt.get("parsed") and not mrz_res.get("parsed"):
+                    mrz_res = attempt
+
+            # If no pair passed all checks yet, test all pairwise combinations
+            if not mrz_res.get("all_checks_passed"):
+                for i in range(len(mrz_candidates)):
+                    for j in range(i + 1, len(mrz_candidates)):
+                        attempt = MRZParser.parse_td3(mrz_candidates[i], mrz_candidates[j])
+                        if attempt.get("all_checks_passed"):
+                            mrz_res = attempt
+                            break
+                        elif attempt.get("parsed") and not mrz_res.get("parsed"):
+                            mrz_res = attempt
+                    if mrz_res.get("all_checks_passed"):
+                        break
         else:
             raw_lines = [r["text"] for r in ocr_res.get("raw_lines", [])]
             for i in range(len(raw_lines) - 1):
                 t1 = raw_lines[i].replace(" ", "").upper()
                 t2 = raw_lines[i+1].replace(" ", "").upper()
                 if (t1.startswith("P<") or t1.count("<") >= 4) and len(t2) >= 25:
-                    mrz_res = MRZParser.parse_td3(raw_lines[i], raw_lines[i+1])
-                    break
+                    attempt = MRZParser.parse_td3(raw_lines[i], raw_lines[i+1])
+                    if attempt.get("parsed"):
+                        mrz_res = attempt
+                        break
 
         AuditService.record_event(
             db, screening_id, "MRZ_VALIDATION_COMPLETED",

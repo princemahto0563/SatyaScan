@@ -174,10 +174,7 @@ class DocumentClassifier:
         # Check for genuine TD3 Passport MRZ (2 lines with heavy filler '<')
         has_genuine_passport_mrz = (
             passport_match.get("mrz_count", 0) >= 2
-            or (
-                any(line.replace(" ", "").upper().startswith(("P<IND", "P<USA", "P<GBR", "P<CAN", "P<AUS")) for line in ocr_lines)
-                and any(line.replace(" ", "").count("<") >= 8 for line in ocr_lines)
-            )
+            and any(line.replace(" ", "").upper().startswith(("P<IND", "P<USA", "P<GBR", "P<CAN", "P<AUS", "P<")) for line in ocr_lines)
         )
 
         # Disambiguation:

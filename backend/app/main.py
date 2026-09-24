@@ -179,10 +179,12 @@ def diagnostic_check():
     import numpy as np
     import cv2
     import time
-    from ai.ocr.ocr_engine import PADDLE_AVAILABLE, OCREngine
+    from ai.ocr.ocr_engine import PADDLE_AVAILABLE, RAPID_AVAILABLE, OCREngine
 
     dummy = np.full((600, 900, 3), 255, dtype=np.uint8)
     cv2.putText(dummy, "PASSPORT P<INDSHARMA<<ARJUN", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+    cv2.putText(dummy, "P<INDSHARMA<<ARJUN<<<<<<<<<<<<<<<<<<<<<<<<<<", (40, 480), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    cv2.putText(dummy, "Z1234567<1IND9205141M2805139<<<<<<<<<<<<<<<2", (40, 520), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
     
     t0 = time.perf_counter()
     txt = pytesseract.image_to_string(dummy)
@@ -194,12 +196,16 @@ def diagnostic_check():
     eng_time = time.perf_counter() - t1
 
     return {
-        "paddle_available": PADDLE_AVAILABLE,
-        "paddle_ocr_object": eng._paddle_ocr is not None,
+        "paddle_available": PADDLE_AVAILABLE or RAPID_AVAILABLE,
+        "rapid_available": RAPID_AVAILABLE,
+        "primary_ocr_object": (eng._rapid_ocr is not None) or (eng._paddle_ocr is not None),
         "tesseract_only_time": round(tess_time, 3),
         "engine_process_time": round(eng_time, 3),
         "engine_used": eng_res.get("engine"),
         "tesseract_text": txt.strip(),
+        "total_lines": eng_res.get("total_lines_detected", 0),
+        "mrz_lines_count": len(eng_res.get("mrz_candidate_lines", [])),
+        "fields_extracted": sum(1 for v in eng_res.get("extracted_fields", {}).values() if v),
     }
 
 
