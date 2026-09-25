@@ -496,17 +496,55 @@ def get_screening_detail(
             "composite": {"observed": cd_comp, "expected": cd_comp, "valid": not has_crit_fail}
         }
 
+    has_id_page_rule = any(vf.rule_id == "IDENTITY_PAGE_REQUIRED" for vf in val_findings)
+    is_id_page = not has_id_page_rule
+    page_type = "PASSPORT_COVER" if has_id_page_rule else ("PASSPORT_IDENTITY_PAGE" if screening.document_type == "PASSPORT" else ("VISA_VIGNETTE" if screening.document_type == "VISA" else "UNKNOWN"))
+    
+    if screening.document_type == "VISA":
+        mrz_status = "MRZ_NOT_APPLICABLE"
+        if not reconstructed_mrz:
+            reconstructed_mrz = {
+                "parsed": False,
+                "mrz_status": "MRZ_NOT_APPLICABLE",
+                "status": "MRZ_NOT_APPLICABLE",
+                "message": "MRZ is not applicable for this visa document type."
+            }
+    elif has_id_page_rule:
+        mrz_status = "MRZ_INPUT_INSUFFICIENT"
+        if not reconstructed_mrz:
+            reconstructed_mrz = {
+                "parsed": False,
+                "mrz_status": "MRZ_INPUT_INSUFFICIENT",
+                "status": "MRZ_INPUT_INSUFFICIENT",
+                "message": "Identity Page Not Detected — recapture required."
+            }
+    elif reconstructed_mrz and reconstructed_mrz.get("parsed"):
+        mrz_status = "MRZ_VALID" if reconstructed_mrz.get("all_checks_passed") else "MRZ_INVALID"
+    else:
+        mrz_status = "MRZ_NOT_DETECTED"
+        reconstructed_mrz = {
+            "parsed": False,
+            "mrz_status": "MRZ_NOT_DETECTED",
+            "status": "MRZ_NOT_DETECTED",
+            "message": "MRZ not detected on document image."
+        }
+
     return {
         "id": screening.id,
         "created_at": screening.created_at,
         "checkpoint_id": screening.checkpoint_id,
         "checkpoint_name": screening.checkpoint_name,
         "document_type": screening.document_type,
+        "page_type": page_type,
+        "is_identity_page": is_id_page,
+        "identity_page_detected": is_id_page,
+        "identity_page_message": "Identity Page Not Detected — recapture required. Upload the passport biodata/identity page containing portrait and machine-readable information." if not is_id_page else "Document verified.",
         "masked_document_id": screening.masked_document_id,
         "status": screening.status,
         "risk_score": screening.risk_score,
         "risk_band": screening.risk_band,
         "recommendation": screening.recommendation,
+        "ocr_status": "SUCCESS" if reconstructed_fields else "FAILED",
         "ocr_engine": getattr(screening, "ocr_engine", None),
         "execution_latency_ms": screening.execution_latency_ms,
         "doc_image_url": f"/api/v1/screenings/media/{screening.id}/doc",
@@ -516,7 +554,8 @@ def get_screening_detail(
         "ela_heatmap_url": f"/api/v1/screenings/media/{screening.id}/heatmap" if screening.ela_heatmap_path else None,
         "quality_assessment": {"verdict": "GOOD", "overall_score": 85.0},
         "extracted_fields": reconstructed_fields,
-        "mrz_data": reconstructed_mrz if reconstructed_mrz else None,
+        "mrz_data": reconstructed_mrz,
+        "mrz_status": mrz_status,
         "validation_findings": val_findings,
         "tamper_findings": tamper_findings,
         "tamper_summary": {

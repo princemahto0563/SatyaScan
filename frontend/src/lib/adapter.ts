@@ -18,6 +18,9 @@ import { BACKEND_ROOT_URL, API_BASE_URL, getAuthTokenSync } from "./api";
 
 export interface DocumentViewModel {
   type: string;
+  pageType?: string;
+  isIdentityPage?: boolean;
+  identityPageMessage?: string;
   number: string;
   maskedNumber: string;
   surname: string;
@@ -38,8 +41,9 @@ export interface DocumentViewModel {
 export interface MRZViewModel {
   applicable: boolean;
   parsed: boolean;
-  statusBadge: "7-3-1 PASS" | "CHECKSUM FAIL" | "UNPARSED" | "NOT APPLICABLE";
+  statusBadge: "7-3-1 PASS" | "CHECKSUM FAIL" | "UNPARSED" | "NOT APPLICABLE" | "NOT DETECTED" | "INPUT INSUFFICIENT";
   statusColor: string;
+  statusMessage?: string;
   lines: string[];
   checkDigits: Record<string, { observed: string; expected: string; valid: boolean }>;
   allChecksPassed: boolean;
@@ -91,7 +95,7 @@ export interface CrossCheckRow {
   visualValue: string;
   mrzValue: string;
   confidence: number;
-  status: "MATCH" | "MISMATCH" | "VIZ_ONLY" | "MRZ_ONLY" | "NOT_PRESENT";
+  status: "MATCH" | "MISMATCH" | "VIZ_ONLY" | "MRZ_ONLY" | "NOT_PRESENT" | "NOT_APPLICABLE" | "UNVERIFIED";
   statusLabel: string;
 }
 
@@ -159,16 +163,65 @@ function resolveAssetUrl(path: string | null | undefined, token?: string | null)
   return fullUrl;
 }
 
+const LABEL_NOISE_PATTERNS = [
+  /^(?:SURNAME|NOM|GIVEN\s*NAMES?|PRENOMS?|FULL\s*NAME|NAME|HOLDER|OF\s*HOLDER)[\s\:\./\-_]*$/i,
+  /^(?:MAT(?:RICULE)?[\s\:\./\-_]*(?:NOM)?|ME\s*INOM|MAT\s*\/NOM[\s\:\.]*|NOM[\s\:\.]*|PRENOM[\s\:\.]*)$/i,
+  /^(?:PASSPORT|PASSPORT\s*NO|DOCUMENT\s*NO|DOC\s*NO|VISA\s*NO|VIGNETTE\s*NO)[\s\:\./\-_]*$/i,
+  /^(?:COUNTRY|NATIONALITY|CITIZENSHIP|SEX|GENDER|DATE\s*OF\s*BIRTH|DOB|DATE\s*OF\s*EXPIRY|EXPIRY)[\s\:\./\-_]*$/i,
+  /^(?:TYPE|CATEGORY|ENTRIES|VALID\s*FROM|VALID\s*UNTIL|ISSUING\s*POST|PLACE\s*OF\s*ISSUE)[\s\:\./\-_]*$/i,
+  /^(?:SIGNATURE|OFFICER|BEARER|AUTORITE|AUTHORITY|REPUBLIC|GOVERNMENT)[\s\:\./\-_]*$/i,
+];
+
+export function isLabelNoise(val: string, fieldName?: string): boolean {
+  if (!val) return true;
+  const s = val.trim();
+
+  const fn = fieldName ? fieldName.toLowerCase() : "";
+  if (fn === "document_type" || fn === "doc_type" || fn === "type") {
+    const cleanDoc = s.toUpperCase().replace(/[^A-Z]/g, "");
+    if (["PASSPORT", "VISA", "ID", "P", "V", "TRAVELDOCUMENT"].includes(cleanDoc)) {
+      return false;
+    }
+  }
+
+  if (fn === "sex" || fn === "gender") {
+    const cleanSex = s.toUpperCase().replace(/[^A-Z]/g, "");
+    if (["M", "F", "MALE", "FEMALE"].includes(cleanSex)) {
+      return false;
+    }
+  }
+
+  if (s.length < 2) return true;
+
+  if (LABEL_NOISE_PATTERNS.some((p) => p.test(s))) return true;
+  if (/^(\/NOM|MAT\s*\/|ME\s*INOM)/i.test(s)) return true;
+  const cleanAlpha = s.replace(/[^A-Za-z]/g, "").toUpperCase();
+  const STOPWORDS = new Set([
+    "NOM", "SURNAME", "PRENOM", "PRENOMS", "GIVEN", "GIVENNAMES", "NAME", "FULLNAME",
+    "MAT", "MATRICULE", "HOLDER", "SIGNATURE", "OFFICER", "PASSPORT", "PASSPORTNO",
+    "DOCUMENT", "DOCUMENTNO", "VISA", "VIGNETTE", "NATIONALITY", "CITIZENSHIP", "SEX",
+    "DATEOFBIRTH", "DOB", "EXPIRY", "EXPIRATION", "VALIDITY", "OF", "NO", "NR", "NUM", "BIRTH"
+  ]);
+  if (STOPWORDS.has(cleanAlpha)) return true;
+  const tokens = s.toUpperCase().split(/[\s/:,.\-_]+/).filter(Boolean);
+  if (tokens.length > 0 && tokens.every(t => STOPWORDS.has(t) || t.length <= 1)) return true;
+  return false;
+}
+
 /**
- * Normalizes empty, null, or placeholder strings into a truthful unavailable state.
+ * Normalizes empty, null, placeholder, or OCR label garbage strings into a truthful unavailable state.
  */
 function normalizeFieldValue(
   val: any,
-  fallback: string = "Not available"
+  fallback: string = "Not available",
+  fieldName?: string
 ): string {
   if (val === null || val === undefined) return fallback;
   const s = String(val).trim();
   if (s === "" || s === "—" || s === "-" || s === "None" || s === "null" || s === "undefined") {
+    return fallback;
+  }
+  if (isLabelNoise(s, fieldName)) {
     return fallback;
   }
   return s;
@@ -189,14 +242,14 @@ function resolveFieldValue(
   fallback: string = "Not available"
 ): string {
   const aliasMap: Record<string, string[]> = {
-    document_type: ["document_type", "doc_type", "type"],
+    document_type: ["document_type", "doc_type", "type", "visa_type"],
     document_number: ["document_number", "passport_number", "visa_number", "doc_number"],
     surname: ["surname", "last_name"],
     given_names: ["given_names", "first_name", "names"],
-    full_name: ["full_name", "name", "holder_name"],
+    full_name: ["full_name", "holder_name", "name"],
     nationality: ["nationality", "issuing_country", "country"],
     date_of_birth: ["date_of_birth", "dob", "birth_date"],
-    date_of_expiry: ["date_of_expiry", "expiry", "expiry_date", "expiration_date"],
+    date_of_expiry: ["date_of_expiry", "valid_until", "expiry", "expiry_date", "expiration_date"],
     sex: ["sex", "gender"],
   };
 
@@ -206,7 +259,7 @@ function resolveFieldValue(
   if (mrzData && mrzData.parsed && isMrzValid) {
     for (const a of aliases) {
       if (mrzData[a]) {
-        const norm = normalizeFieldValue(mrzData[a], "");
+        const norm = normalizeFieldValue(mrzData[a], "", canonicalName);
         if (norm) return norm;
       }
     }
@@ -217,15 +270,15 @@ function resolveFieldValue(
     const matched = fields.find((f) => f.field_name.toLowerCase() === a.toLowerCase());
     if (matched) {
       if (matched.visual_value) {
-        const norm = normalizeFieldValue(matched.visual_value, "");
+        const norm = normalizeFieldValue(matched.visual_value, "", canonicalName);
         if (norm) return norm;
       }
       if (matched.mrz_value) {
-        const norm = normalizeFieldValue(matched.mrz_value, "");
+        const norm = normalizeFieldValue(matched.mrz_value, "", canonicalName);
         if (norm) return norm;
       }
       if (matched.field_value) {
-        const norm = normalizeFieldValue(matched.field_value, "");
+        const norm = normalizeFieldValue(matched.field_value, "", canonicalName);
         if (norm) return norm;
       }
     }
@@ -235,7 +288,7 @@ function resolveFieldValue(
   if (mrzData) {
     for (const a of aliases) {
       if (mrzData[a]) {
-        const norm = normalizeFieldValue(mrzData[a], "");
+        const norm = normalizeFieldValue(mrzData[a], "", canonicalName);
         if (norm) return norm;
       }
     }
@@ -246,7 +299,7 @@ function resolveFieldValue(
     const s = resolveFieldValue("surname", fields, mrzData, isMrzValid, "");
     const g = resolveFieldValue("given_names", fields, mrzData, isMrzValid, "");
     const combined = `${g} ${s}`.trim();
-    if (combined) return combined;
+    if (combined && !isLabelNoise(combined, "full_name")) return combined;
   }
 
   return fallback;
@@ -313,12 +366,72 @@ export function normalizeDateForComparison(val: any): string | null {
 }
 
 /**
+ * Field equivalence comparator enforcing canonical date comparison,
+ * token-order tolerance for full names, and abbreviation matching (e.g. INDIAN vs IND).
+ */
+export function isFieldMatch(fieldName: string, vizVal: string, mrzVal: string): boolean {
+  const isDateField =
+    fieldName === "date_of_birth" ||
+    fieldName === "date_of_expiry" ||
+    fieldName.includes("date") ||
+    fieldName === "dob" ||
+    fieldName === "expiry";
+
+  if (isDateField) {
+    const normV = normalizeDateForComparison(vizVal);
+    const normM = normalizeDateForComparison(mrzVal);
+    if (normV && normM) {
+      return normV === normM;
+    }
+  }
+
+  const cleanV = vizVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const cleanM = mrzVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  if (cleanV === cleanM) return true;
+
+  if (fieldName === "nationality") {
+    if ((cleanV === "INDIAN" && cleanM === "IND") || (cleanV === "IND" && cleanM === "INDIAN")) return true;
+    if (cleanV.startsWith(cleanM) || cleanM.startsWith(cleanV)) return true;
+  }
+
+  if (fieldName === "document_type") {
+    if ((cleanV === "PASSPORT" && cleanM === "P") || (cleanV === "P" && cleanM === "PASSPORT")) return true;
+    if ((cleanV === "VISA" && cleanM === "V") || (cleanV === "V" && cleanM === "VISA")) return true;
+  }
+
+  if (fieldName === "sex" || fieldName === "gender") {
+    if ((cleanV === "M" || cleanV === "MALE") && (cleanM === "M" || cleanM === "MALE")) return true;
+    if ((cleanV === "F" || cleanV === "FEMALE") && (cleanM === "F" || cleanM === "FEMALE")) return true;
+  }
+
+  if (fieldName === "full_name" || fieldName === "name") {
+    const wordsV = vizVal.toUpperCase().split(/[^A-Z]+/).filter((w) => w.length > 1);
+    const wordsM = mrzVal.toUpperCase().split(/[^A-Z]+/).filter((w) => w.length > 1);
+    if (wordsV.length > 0 && wordsM.length > 0) {
+      const setV = new Set(wordsV);
+      const setM = new Set(wordsM);
+      const intersect = wordsV.filter((w) => setM.has(w));
+      const overlap = intersect.length / Math.max(setV.size, setM.size);
+      if (overlap >= 0.7) return true;
+    }
+  }
+
+  if (cleanV.startsWith(cleanM) || cleanM.startsWith(cleanV)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Builds dynamic MRZ & Visual Inspection Zone cross-check rows.
  * Merges every standard canonical field and all extra extracted fields.
  */
 function buildCrossCheckRows(
   fields: ExtractedField[] = [],
-  mrzData?: Record<string, any> | null
+  mrzData?: Record<string, any> | null,
+  docType: string = "PASSPORT",
+  mrzStatus: string = "MRZ_VALID"
 ): CrossCheckRow[] {
   const canonicalDefs: Array<{ key: string; label: string }> = [
     { key: "document_type", label: "DOCUMENT TYPE" },
@@ -335,90 +448,72 @@ function buildCrossCheckRows(
   const rows: CrossCheckRow[] = [];
   const handledKeys = new Set<string>();
 
+  const isMrzNotApplicable = mrzStatus === "MRZ_NOT_APPLICABLE" || docType.toUpperCase() === "VISA";
+  const isInputInsufficient = mrzStatus === "MRZ_INPUT_INSUFFICIENT";
+  const isMrzNotDetected = mrzStatus === "MRZ_NOT_DETECTED";
+
   for (const def of canonicalDefs) {
     handledKeys.add(def.key);
     // Find matching extracted field
     const fieldMatch = fields.find(
       (f) =>
         f.field_name.toLowerCase() === def.key.toLowerCase() ||
-        (def.key === "document_number" && f.field_name.toLowerCase() === "passport_number") ||
-        (def.key === "full_name" && f.field_name.toLowerCase() === "name")
+        (def.key === "document_number" && (f.field_name.toLowerCase() === "passport_number" || f.field_name.toLowerCase() === "visa_number")) ||
+        (def.key === "full_name" && (f.field_name.toLowerCase() === "name" || f.field_name.toLowerCase() === "holder_name")) ||
+        (def.key === "date_of_expiry" && f.field_name.toLowerCase() === "valid_until")
     );
 
     const mrzValRaw =
       mrzData && mrzData.parsed
         ? mrzData[def.key] ||
-          (def.key === "document_number" ? mrzData.passport_number : undefined) ||
+          (def.key === "document_number" ? (mrzData.document_number || mrzData.passport_number) : undefined) ||
           (def.key === "document_type" ? mrzData.document_code : undefined)
         : null;
 
-    const vizVal = normalizeFieldValue(fieldMatch?.visual_value, "");
-    const mrzVal = normalizeFieldValue(mrzValRaw || fieldMatch?.mrz_value, "");
+    const vizVal = normalizeFieldValue(fieldMatch?.visual_value || fieldMatch?.field_value, "", def.key);
+    const mrzVal = normalizeFieldValue(mrzValRaw || fieldMatch?.mrz_value, "", def.key);
     const conf = fieldMatch?.confidence ?? (vizVal ? 0.95 : 0.0);
-
-    const isDateField =
-      def.key === "date_of_birth" ||
-      def.key === "date_of_expiry" ||
-      def.key.includes("date") ||
-      def.key === "dob" ||
-      def.key === "expiry";
 
     let status: CrossCheckRow["status"] = "NOT_PRESENT";
     let statusLabel = "Not Present";
 
     if (vizVal && mrzVal) {
-      if (isDateField) {
-        const normV = normalizeDateForComparison(vizVal);
-        const normM = normalizeDateForComparison(mrzVal);
-        if (normV && normM) {
-          if (normV === normM) {
-            status = "MATCH";
-            statusLabel = "Match";
-          } else {
-            status = "MISMATCH";
-            statusLabel = "Discrepancy";
-          }
-        } else if (normV || normM) {
-          // One is a valid date, the other is invalid -> MISMATCH
-          status = "MISMATCH";
-          statusLabel = "Discrepancy";
-        } else {
-          // Neither is a valid calendar date: fallback to sanitized literal comparison
-          const cleanV = vizVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-          const cleanM = mrzVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-          if (cleanV && cleanV === cleanM) {
-            status = "MATCH";
-            statusLabel = "Match";
-          } else {
-            status = "MISMATCH";
-            statusLabel = "Discrepancy";
-          }
-        }
+      const isMatch = isFieldMatch(def.key, vizVal, mrzVal);
+      if (isMatch) {
+        status = "MATCH";
+        statusLabel = "Match";
       } else {
-        // Comparison for non-date fields
-        const cleanV = vizVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-        const cleanM = mrzVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-        if (cleanV === cleanM || cleanV.startsWith(cleanM) || cleanM.startsWith(cleanV)) {
-          status = "MATCH";
-          statusLabel = "Match";
-        } else {
-          status = "MISMATCH";
-          statusLabel = "Discrepancy";
-        }
+        status = "MISMATCH";
+        statusLabel = "Discrepancy";
       }
     } else if (vizVal) {
-      status = "VIZ_ONLY";
-      statusLabel = "VIZ Only";
+      status = isMrzNotApplicable ? "NOT_APPLICABLE" : "VIZ_ONLY";
+      statusLabel = isMrzNotApplicable ? "Not Applicable" : "VIZ Only";
     } else if (mrzVal) {
       status = "MRZ_ONLY";
       statusLabel = "MRZ Only";
+    }
+
+    let displayMrzValue = mrzVal;
+    if (!displayMrzValue) {
+      if (isMrzNotApplicable) {
+        displayMrzValue = "Not applicable";
+      } else if (isInputInsufficient) {
+        displayMrzValue = "Identity page required";
+      } else if (isMrzNotDetected) {
+        displayMrzValue = "Not detected";
+      } else if (mrzData?.parsed) {
+        displayMrzValue = "Not present in MRZ";
+      } else {
+        displayMrzValue = "MRZ unparsed";
+      }
     }
 
     rows.push({
       fieldName: def.key,
       displayName: def.label,
       visualValue: vizVal || "Not available",
-      mrzValue: mrzVal || (mrzData?.parsed ? "Not present in MRZ" : "MRZ unparsed"),
+      mrzValue: displayMrzValue,
       confidence: conf,
       status,
       statusLabel,
@@ -428,33 +523,20 @@ function buildCrossCheckRows(
   // Add any extra non-canonical fields present in extracted_fields
   for (const f of fields) {
     const lk = f.field_name.toLowerCase();
-    if (!handledKeys.has(lk) && lk !== "passport_number" && lk !== "name") {
-      const vVal = normalizeFieldValue(f.visual_value, "");
-      const mVal = normalizeFieldValue(f.mrz_value, "");
+    if (!handledKeys.has(lk) && lk !== "passport_number" && lk !== "name" && lk !== "holder_name" && lk !== "visa_number") {
+      const vVal = normalizeFieldValue(f.visual_value || f.field_value, "", lk);
+      const mVal = normalizeFieldValue(f.mrz_value, "", lk);
       let status: CrossCheckRow["status"] = (f.match_status as any) || "VIZ_ONLY";
       let statusLabel = f.match_status || "Extracted";
 
-      const isExtraDateField = lk.includes("date") || lk === "dob" || lk === "expiry";
       if (vVal && mVal) {
-        if (isExtraDateField) {
-          const nV = normalizeDateForComparison(vVal);
-          const nM = normalizeDateForComparison(mVal);
-          if (nV && nM) {
-            if (nV === nM) {
-              status = "MATCH";
-              statusLabel = "Match";
-            } else {
-              status = "MISMATCH";
-              statusLabel = "Discrepancy";
-            }
-          }
+        const isMatch = isFieldMatch(lk, vVal, mVal);
+        if (isMatch) {
+          status = "MATCH";
+          statusLabel = "Match";
         } else {
-          const cV = vVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-          const cM = mVal.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
-          if (cV === cM || cV.startsWith(cM) || cM.startsWith(cV)) {
-            status = "MATCH";
-            statusLabel = "Match";
-          }
+          status = "MISMATCH";
+          statusLabel = "Discrepancy";
         }
       }
 
@@ -462,7 +544,7 @@ function buildCrossCheckRows(
         fieldName: f.field_name,
         displayName: f.field_name.replace(/_/g, " ").toUpperCase(),
         visualValue: vVal || "Not available",
-        mrzValue: mVal || "Not available",
+        mrzValue: mVal || (isMrzNotApplicable ? "Not applicable" : "Not available"),
         confidence: f.confidence,
         status,
         statusLabel,
@@ -483,24 +565,34 @@ export function mapScreeningResponseToReportViewModel(
   const isPassport = (data.document_type || "PASSPORT").toUpperCase() === "PASSPORT";
   const mrzParsed = Boolean(data.mrz_data?.parsed);
   const mrzAllChecksPassed = Boolean(data.mrz_data?.all_checks_passed);
+  const mrzStatusRaw = (data as any).mrz_status || (data.mrz_data as any)?.mrz_status || (data.mrz_data as any)?.status;
 
-  // MRZ Status
+  const pageType = (data as any).page_type || (isPassport ? "PASSPORT_IDENTITY_PAGE" : "VISA_VIGNETTE");
+  const isIdentityPage = (data as any).is_identity_page !== undefined ? (data as any).is_identity_page : (pageType !== "PASSPORT_COVER");
+  const identityPageMessage = (data as any).identity_page_message || (!isIdentityPage ? "Identity Page Not Detected — recapture required. Upload the passport biodata/identity page containing portrait and machine-readable information." : undefined);
+
+  // MRZ Status Badge with explicit 6-state model
   let mrzStatusBadge: MRZViewModel["statusBadge"] = "NOT APPLICABLE";
-  let mrzStatusColor = "bg-slate-100 text-slate-600 border-slate-200";
+  let mrzStatusColor = "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
 
-  if (isPassport) {
-    if (mrzParsed) {
-      if (mrzAllChecksPassed) {
-        mrzStatusBadge = "7-3-1 PASS";
-        mrzStatusColor = "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
-      } else {
-        mrzStatusBadge = "CHECKSUM FAIL";
-        mrzStatusColor = "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800";
-      }
-    } else {
-      mrzStatusBadge = "UNPARSED";
-      mrzStatusColor = "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
-    }
+  if (mrzStatusRaw === "MRZ_VALID" || (mrzParsed && mrzAllChecksPassed)) {
+    mrzStatusBadge = "7-3-1 PASS";
+    mrzStatusColor = "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
+  } else if (mrzStatusRaw === "MRZ_INVALID" || (mrzParsed && !mrzAllChecksPassed)) {
+    mrzStatusBadge = "CHECKSUM FAIL";
+    mrzStatusColor = "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800";
+  } else if (mrzStatusRaw === "MRZ_NOT_APPLICABLE" || (!isPassport && !mrzParsed)) {
+    mrzStatusBadge = "NOT APPLICABLE";
+    mrzStatusColor = "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700";
+  } else if (mrzStatusRaw === "MRZ_INPUT_INSUFFICIENT" || pageType === "PASSPORT_COVER" || !isIdentityPage) {
+    mrzStatusBadge = "INPUT INSUFFICIENT";
+    mrzStatusColor = "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
+  } else if (mrzStatusRaw === "MRZ_NOT_DETECTED") {
+    mrzStatusBadge = "NOT DETECTED";
+    mrzStatusColor = "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
+  } else if (mrzStatusRaw === "MRZ_UNPARSED" || (isPassport && !mrzParsed)) {
+    mrzStatusBadge = "UNPARSED";
+    mrzStatusColor = "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
   }
 
   // Document Fields with truthful resolution
@@ -582,7 +674,12 @@ export function mapScreeningResponseToReportViewModel(
   const copyMoveFinding = findings.find((f) => f.technique === "COPY_MOVE");
 
   // Cross-check rows & Discrepancies
-  const crossCheckRows = buildCrossCheckRows(data.extracted_fields, data.mrz_data);
+  const crossCheckRows = buildCrossCheckRows(
+    data.extracted_fields,
+    data.mrz_data,
+    data.document_type || "PASSPORT",
+    mrzStatusRaw || (isPassport ? "MRZ_VALID" : "MRZ_NOT_APPLICABLE")
+  );
   const discrepancies: Record<string, { visual: string; mrz: string }> = {};
   for (const row of crossCheckRows) {
     if (row.status === "MISMATCH" && row.visualValue !== "Not available" && row.mrzValue !== "Not available") {
@@ -605,6 +702,9 @@ export function mapScreeningResponseToReportViewModel(
 
     document: {
       type: docType,
+      pageType,
+      isIdentityPage,
+      identityPageMessage,
       number: fullDocNumber,
       maskedNumber: data.masked_document_id || "Not available",
       surname,

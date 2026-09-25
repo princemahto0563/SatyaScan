@@ -364,7 +364,7 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                       ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300"
                       : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                   }`}>
-                    {blockchainAnchor.status}
+                    {blockchainAnchor.status === "UNAVAILABLE" ? "OFFLINE / NOT CONNECTED" : blockchainAnchor.status}
                   </span>
                   <span className="text-[10px] text-slate-500 dark:text-slate-400">
                     ({blockchainAnchor.network} · {blockchainAnchor.channel})
@@ -407,6 +407,23 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Identity Page Not Detected Banner if Passport Cover / Non-Identity Page */}
+      {(model.document.isIdentityPage === false || model.document.pageType === "PASSPORT_COVER") && (
+        <div className="rounded-xl p-4 border text-xs shadow-sm bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-600/40 text-amber-900 dark:text-amber-200">
+          <div className="flex items-start space-x-3">
+            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+            <div>
+              <span className="font-bold text-sm block">
+                Identity Page Not Detected — Recapture Required
+              </span>
+              <p className="mt-0.5 text-slate-700 dark:text-slate-300">
+                {model.document.identityPageMessage || "Upload the passport biodata/identity page containing portrait and machine-readable information. The submitted image does not contain an identity portrait or machine-readable zone (MRZ)."}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -541,7 +558,7 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                   </div>
 
                   <span className="font-mono text-[11px] rounded bg-slate-100 dark:bg-slate-800 px-2 py-0.5 text-slate-700 dark:text-slate-300 font-semibold">
-                    {model.document.type}
+                    {model.document.pageType === "PASSPORT_COVER" ? "PASSPORT (COVER)" : model.document.type}
                   </span>
                 </div>
 
@@ -731,7 +748,11 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                           ) : (
                             <div className="flex flex-col items-center justify-center p-2 text-center text-slate-400">
                               <UserX className="w-5 h-5 mb-1 opacity-50" />
-                              <span className="text-[10px] font-medium">Portrait Unavailable</span>
+                              <span className="text-[10px] font-medium leading-tight">
+                                {model.document.isIdentityPage === false || model.document.pageType === "PASSPORT_COVER"
+                                  ? "Identity Portrait Not Detected (Recapture required)"
+                                  : "Portrait Unavailable"}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1262,6 +1283,14 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                           <span className="inline-flex items-center space-x-1 text-teal-600 dark:text-teal-400 font-medium text-[11px]">
                             <span>MRZ Only</span>
                           </span>
+                        ) : row.status === "NOT_APPLICABLE" ? (
+                          <span className="inline-flex items-center space-x-1 text-slate-400 font-medium text-[11px]">
+                            <span>Not Applicable</span>
+                          </span>
+                        ) : row.status === "UNVERIFIED" ? (
+                          <span className="inline-flex items-center space-x-1 text-amber-600 dark:text-amber-400 font-medium text-[11px]">
+                            <span>Unverified</span>
+                          </span>
                         ) : (
                           <span className="inline-flex items-center space-x-1 text-slate-400 font-medium text-[11px]">
                             <span>Not Present</span>
@@ -1385,7 +1414,11 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                     ) : (
                       <div className="flex flex-col items-center justify-center p-3 text-center text-slate-400">
                         <UserX className="w-6 h-6 mb-1 opacity-50" />
-                        <span className="text-xs">Portrait Unavailable</span>
+                        <span className="text-xs">
+                          {model.document.isIdentityPage === false || model.document.pageType === "PASSPORT_COVER"
+                            ? "Identity Portrait Not Detected (Recapture required)"
+                            : "Portrait Unavailable"}
+                        </span>
                       </div>
                     )}
                   </div>
@@ -1563,7 +1596,7 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                     ? "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border border-rose-300 dark:border-rose-700"
                     : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
                 }`}>
-                  {blockchainAnchor?.status || "NOT ANCHORED"}
+                  {blockchainAnchor?.status === "UNAVAILABLE" ? "OFFLINE / NOT CONNECTED" : (blockchainAnchor?.status || "NOT ANCHORED")}
                 </span>
               </div>
             </div>

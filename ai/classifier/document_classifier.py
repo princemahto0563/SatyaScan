@@ -182,19 +182,27 @@ class DocumentClassifier:
         # But genuine Passports do not have Visa headers, Visa Categories, Stay Durations, or Entry conditions.
         if visa_match["detected"] and passport_match["detected"]:
             if has_genuine_passport_mrz and len(visa_match["indicators"]) < 3:
+                is_id_page = passport_match.get("is_identity_page", True)
+                page_type = passport_match.get("page_type", "PASSPORT_IDENTITY_PAGE" if is_id_page else "PASSPORT_COVER")
                 return _wrap_res({
                     "verdict": "PASSPORT",
-                    "detected_type": "PASSPORT",
+                    "detected_type": "PASSPORT" if is_id_page else "PASSPORT_COVER",
+                    "page_type": page_type,
+                    "is_identity_page": is_id_page,
+                    "identity_page_detected": is_id_page,
                     "is_supported": True,
                     "confidence": passport_match["confidence"],
                     "indicators": passport_match["indicators"],
-                    "message": "Valid passport layout detected.",
+                    "message": "Valid passport layout detected." if is_id_page else "Identity Page Not Detected. Upload the passport biodata/identity page containing portrait and machine-readable information.",
                     "raw_text": raw_text[:500]
                 })
             else:
                 return _wrap_res({
                     "verdict": "VISA",
                     "detected_type": "VISA",
+                    "page_type": "VISA_VIGNETTE",
+                    "is_identity_page": True,
+                    "identity_page_detected": True,
                     "is_supported": True,
                     "confidence": visa_match["confidence"],
                     "indicators": visa_match["indicators"],
@@ -203,13 +211,22 @@ class DocumentClassifier:
                 })
 
         if passport_match["detected"]:
+            is_id_page = passport_match.get("is_identity_page", True)
+            page_type = passport_match.get("page_type", "PASSPORT_IDENTITY_PAGE" if is_id_page else "PASSPORT_COVER")
             return _wrap_res({
                 "verdict": "PASSPORT",
-                "detected_type": "PASSPORT",
+                "detected_type": "PASSPORT" if is_id_page else "PASSPORT_COVER",
+                "page_type": page_type,
+                "is_identity_page": is_id_page,
+                "identity_page_detected": is_id_page,
                 "is_supported": True,
                 "confidence": passport_match["confidence"],
                 "indicators": passport_match["indicators"],
-                "message": "Valid passport layout detected.",
+                "message": (
+                    "Valid passport biodata page detected."
+                    if is_id_page
+                    else "Identity Page Not Detected. Upload the passport biodata/identity page containing portrait and machine-readable information."
+                ),
                 "raw_text": raw_text[:500]
             })
 
@@ -217,6 +234,9 @@ class DocumentClassifier:
             return _wrap_res({
                 "verdict": "VISA",
                 "detected_type": "VISA",
+                "page_type": "VISA_VIGNETTE",
+                "is_identity_page": True,
+                "identity_page_detected": True,
                 "is_supported": True,
                 "confidence": visa_match["confidence"],
                 "indicators": visa_match["indicators"],
@@ -416,12 +436,51 @@ class DocumentClassifier:
             ("REPUBLIC OF INDIA" in upper_text and (re.search(r'\bP\s+IND\b', upper_text) or "IDENTITY PAGE" in upper_text or doc_num_match is not None))
         )
 
+        # Check for cover / non-identity markers
+        cover_indicators = []
+        COVER_KEYWORDS = [
+            "FRONT COVER", "PASSPORT COVER", "COVER", "PAGE 4-5", "PAGE 35-36",
+            "ADDRESS PAGE", "OBSERVATION PAGE", "EMBASSY OF INDIA", "MINISTRY OF EXTERNAL AFFAIRS"
+        ]
+        for kw in COVER_KEYWORDS:
+            if kw in upper_text:
+                cover_indicators.append(f"Cover/non-identity marker found: '{kw}'")
+
+        # Identity page field markers
+        identity_indicators = []
+        ID_KEYWORDS = [
+            "GIVEN NAME", "SURNAME", "DATE OF BIRTH", "DATE DE NAISSANCE", "SEX", "SEXE",
+            "NATIONALITY", "NATIONALITE", "PLACE OF BIRTH", "PLACE OF ISSUE", "DATE OF EXPIRY"
+        ]
+        for kw in ID_KEYWORDS:
+            if kw in upper_text:
+                identity_indicators.append(f"Identity field label found: '{kw}'")
+
+        # Page classification logic:
+        # It is a valid PASSPORT_IDENTITY_PAGE if:
+        # - Has MRZ line(s) OR
+        # - Has >= 2 identity field labels AND doc_num_match
+        # It is a PASSPORT_COVER / non-identity page if:
+        # - Has cover_indicators OR
+        # - Lacks MRZ AND lacks identity field labels
+        is_identity_page = True
+        if cover_indicators:
+            is_identity_page = False
+            indicators.extend(cover_indicators)
+        elif mrz_count == 0 and len(identity_indicators) == 0:
+            is_identity_page = False
+            indicators.append("No MRZ or identity fields found (Cover / Non-identity page)")
+
+        page_type = "PASSPORT_IDENTITY_PAGE" if is_identity_page else "PASSPORT_COVER"
+
         confidence = 0.98 if mrz_count >= 2 else 0.90 if is_passport else 0.0
         return {
             "detected": is_passport,
             "confidence": confidence,
             "mrz_count": mrz_count,
-            "indicators": indicators
+            "indicators": indicators,
+            "page_type": page_type,
+            "is_identity_page": is_identity_page
         }
 
     def _check_visa_patterns(self, upper_text: str, lines: List[str]) -> Dict[str, Any]:

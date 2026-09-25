@@ -266,12 +266,17 @@ class ScreeningDetailResponse(BaseModel):
     audit_trail: List[AuditEventSchema]
     blockchain_anchor: Optional[Dict[str, Any]] = None
 
-    reference_comparison: Optional[FieldComparisonSummarySchema] = None
-    reference_baseline: Optional[ReferenceBaselineInfoSchema] = None
-    passport_visa_linkage: Optional[LinkageResultSchema] = None
+    page_type: Optional[str] = None
+    is_identity_page: Optional[bool] = None
+    identity_page_detected: Optional[bool] = None
+    identity_page_message: Optional[str] = None
+    mrz_status: Optional[str] = None
+    ocr_status: Optional[str] = None
+    ocr_reason: Optional[str] = None
 
     class Config:
         from_attributes = True
+        extra = "allow"
 
 
 class UnsupportedDocumentResponse(BaseModel):

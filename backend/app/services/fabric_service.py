@@ -178,7 +178,7 @@ class FabricAnchorService:
         ledger_asset_id: Optional[str] = None
         anchor_ts: Optional[datetime] = None
         status = "UNAVAILABLE"
-        verification_msg = "Private ledger service is not reachable. Existing SHA-256 audit chain remains active."
+        verification_msg = "Hyperledger Fabric: OFFLINE / NOT CONNECTED. SHA-256 Cryptographic Audit Chain: ACTIVE."
 
         if settings.FABRIC_ENABLED:
             tx_success, tx_data, err_msg = cls._submit_to_fabric(candidate_payload)
@@ -193,7 +193,7 @@ class FabricAnchorService:
                 verification_msg = f"Hyperledger Fabric gateway error: {err_msg}. Local SHA-256 audit chain active."
         else:
             status = "UNAVAILABLE"
-            verification_msg = "Private ledger service is not reachable. Existing SHA-256 audit chain remains active."
+            verification_msg = "Hyperledger Fabric: OFFLINE / NOT CONNECTED. SHA-256 Cryptographic Audit Chain: ACTIVE."
 
         # 5. Persist to Local Database
         anchor_rec = BlockchainAnchor(
@@ -311,7 +311,7 @@ class FabricAnchorService:
             # Offline / Prototype Mode: report unavailable without pretending ledger connection
             status = "UNAVAILABLE"
             is_verified = False
-            msg = "Private ledger service is not reachable. Existing SHA-256 audit chain remains active."
+            msg = "Hyperledger Fabric: OFFLINE / NOT CONNECTED. SHA-256 Cryptographic Audit Chain: ACTIVE."
 
         # Record verification audit event
         AuditService.record_event(

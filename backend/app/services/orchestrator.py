@@ -282,7 +282,14 @@ class ScreeningOrchestrator:
             {"total_lines": ocr_res.get("total_lines_detected"), "ocr_engine": actual_engine}
         )
 
-        # 2. MRZ Extraction & 7-3-1 Check Digits
+        # 2. Page Classification & MRZ Extraction & 7-3-1 Check Digits
+        page_type = classification_result.get("page_type", "PASSPORT_IDENTITY_PAGE") if classification_result else "PASSPORT_IDENTITY_PAGE"
+        is_id_page = classification_result.get("is_identity_page", True) if classification_result else True
+        if classification_result is None or "is_identity_page" not in classification_result:
+            p_type, is_id, _, _ = self.document_classifier._check_passport_patterns(ocr_res.get("raw_lines", []))
+            page_type = p_type
+            is_id_page = is_id
+
         mrz_candidates = ocr_res.get("mrz_candidate_lines", [])
         mrz_res: Dict[str, Any] = {"parsed": False}
 
@@ -319,9 +326,17 @@ class ScreeningOrchestrator:
                         mrz_res = attempt
                         break
 
+        mrz_status = MRZParser.determine_mrz_state(
+            doc_type="PASSPORT",
+            page_type=page_type,
+            candidate_lines=mrz_candidates,
+            mrz_data=mrz_res,
+            is_identity_page=is_id_page
+        )
+
         AuditService.record_event(
             db, screening_id, "MRZ_VALIDATION_COMPLETED",
-            {"parsed": mrz_res.get("parsed", False), "all_checks_passed": mrz_res.get("all_checks_passed", False)}
+            {"parsed": mrz_res.get("parsed", False), "all_checks_passed": mrz_res.get("all_checks_passed", False), "mrz_status": mrz_status}
         )
 
         # 3. VIZ vs MRZ Cross-Check Findings
@@ -375,6 +390,18 @@ class ScreeningOrchestrator:
                     "classification": "PROTOTYPE_RULE"
                 })
 
+        if not is_id_page or page_type == "PASSPORT_COVER":
+            rule_findings.append({
+                "rule_id": "IDENTITY_PAGE_REQUIRED",
+                "category": "DOCUMENT_PAGE",
+                "severity": "CRITICAL",
+                "field": "page_type",
+                "expected": "PASSPORT_IDENTITY_PAGE",
+                "observed": page_type,
+                "message": "Identity Page Not Detected — recapture required. Upload the passport biodata/identity page containing portrait and machine-readable information.",
+                "classification": "OFFICIAL_STANDARD"
+            })
+
         AuditService.record_event(
             db, screening_id, "RULES_VALIDATION_COMPLETED",
             {"viz_findings_count": len(viz_mrz_findings), "rule_findings_count": len(rule_findings)}
@@ -391,7 +418,23 @@ class ScreeningOrchestrator:
         face_res = None
         doc_face_crop_path = None
         live_face_crop_path = None
-        if live_image_path and os.path.exists(live_image_path):
+        if not is_id_page or page_type == "PASSPORT_COVER":
+            # If not an identity page (e.g. passport cover), identity portrait is absent
+            face_res = {
+                "metric": "Cosine Similarity",
+                "similarity_score": 0.0,
+                "threshold": 0.68,
+                "verification_result": "INPUT_FAILURE",
+                "decision_state": "UNABLE_TO_VERIFY",
+                "recommendation": "Usable identity portrait not detected in submitted document image.",
+                "reason": "Usable identity portrait not detected in submitted document image.",
+                "provider": "SFace-ResNet-128d-v1.0",
+                "provider_type": "DEEP_NEURAL",
+                "appearance_analysis": {"appearance_difference_level": "MINIMAL", "observations": ["No document portrait detected on submitted cover page."]},
+                "live_quality": {"status": "NOT_AVAILABLE", "reasons": []},
+                "presentation_attack": {"status": "NOT_AVAILABLE", "reason": None}
+            }
+        elif live_image_path and os.path.exists(live_image_path):
             face_res = self.face_verifier.verify(doc_image_path, live_image_path)
             try:
                 os.makedirs(settings.STORAGE_DIR, exist_ok=True)
@@ -454,7 +497,20 @@ class ScreeningOrchestrator:
         raw_doc_id = doc_num_to_check or "UNKNOWN"
         masked_id = mask_document_number(raw_doc_id)
 
-        if quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"]:
+        if not is_id_page or page_type == "PASSPORT_COVER":
+            terminal_status = "MANUAL_REVIEW_REQUIRED"
+            terminal_rec = "Identity Page Not Detected — recapture required. Upload the passport biodata/identity page containing portrait and machine-readable information."
+            risk_res["risk_score"] = max(risk_res.get("risk_score", 0), 75.0)
+            risk_res["risk_band"] = "HIGH"
+            if not any(r.get("category") == "DOCUMENT_PAGE" for r in risk_res.get("reasons", [])):
+                risk_res["reasons"].insert(0, {
+                    "category": "DOCUMENT_PAGE",
+                    "severity": "CRITICAL",
+                    "summary": "Identity Page Not Detected",
+                    "detail": "Submitted image appears to be a passport cover or non-identity page. Biodata page containing portrait and MRZ is required.",
+                    "action": "Recapture passport biodata page."
+                })
+        elif quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"]:
             terminal_status = "UNABLE_TO_VERIFY"
             terminal_rec = "Unable to verify — image quality is insufficient. Please capture a clearer document."
         elif risk_res["risk_band"] == "LOW":
@@ -731,6 +787,21 @@ class ScreeningOrchestrator:
             .all()
         )
 
+        mrz_payload = {
+            "parsed": mrz_res.get("parsed", False),
+            "mrz_status": mrz_status,
+            "status": mrz_status,
+            "message": mrz_res.get("status_message") or (
+                "Identity Page Not Detected — recapture required." if mrz_status == "MRZ_INPUT_INSUFFICIENT"
+                else ("MRZ Not Detected on Identity Page." if mrz_status == "MRZ_NOT_DETECTED"
+                else ("MRZ Parsing Failed." if mrz_status == "MRZ_UNPARSED"
+                else ("All ICAO Doc 9303 check digits verified." if mrz_status == "MRZ_VALID"
+                else ("MRZ checksum validation failed." if mrz_status == "MRZ_INVALID"
+                else "MRZ Not Applicable for this document type."))))
+            ),
+            **(mrz_res if mrz_res.get("parsed") else {})
+        }
+
         return {
             "id": screening_id,
             "screening_id": screening_id,
@@ -738,6 +809,10 @@ class ScreeningOrchestrator:
             "checkpoint_id": checkpoint_id,
             "checkpoint_name": checkpoint_name,
             "document_type": "PASSPORT",
+            "page_type": page_type,
+            "is_identity_page": is_id_page,
+            "identity_page_detected": is_id_page,
+            "identity_page_message": "Passport identity page verified." if is_id_page else "Identity Page Not Detected — recapture required. Upload the passport biodata/identity page containing portrait and machine-readable information.",
             "masked_document_id": masked_id,
             "status": screening_rec.status,
             "risk_score": risk_res["risk_score"],
@@ -754,7 +829,8 @@ class ScreeningOrchestrator:
             "ela_heatmap_url": f"/api/v1/screenings/media/{screening_id}/heatmap" if tamper_res.get("heatmap_path") else None,
             "quality_assessment": quality_res,
             "extracted_fields": field_records,
-            "mrz_data": mrz_res if mrz_res.get("parsed") else None,
+            "mrz_data": mrz_payload,
+            "mrz_status": mrz_status,
             "validation_findings": val_records,
             "tamper_findings": tamper_records,
             "tamper_summary": tamper_res,
@@ -923,6 +999,30 @@ class ScreeningOrchestrator:
         )
         db.add(screening_rec)
 
+        # Ensure canonical field aliases exist for unified report rendering
+        if "holder_name" in visa_fields and "full_name" not in visa_fields and visa_fields["holder_name"].get("value"):
+            visa_fields["full_name"] = dict(visa_fields["holder_name"])
+        if "visa_number" in visa_fields and "document_number" not in visa_fields and visa_fields["visa_number"].get("value"):
+            visa_fields["document_number"] = dict(visa_fields["visa_number"])
+        elif "passport_number" in visa_fields and "document_number" not in visa_fields and visa_fields["passport_number"].get("value"):
+            visa_fields["document_number"] = dict(visa_fields["passport_number"])
+        if "valid_until" in visa_fields and "date_of_expiry" not in visa_fields and visa_fields["valid_until"].get("value"):
+            visa_fields["date_of_expiry"] = dict(visa_fields["valid_until"])
+
+        mrz_status = MRZParser.determine_mrz_state(
+            doc_type="VISA",
+            page_type="VISA_VIGNETTE",
+            candidate_lines=ocr_res.get("mrz_candidate_lines", []),
+            mrz_data=None,
+            is_identity_page=True
+        )
+        mrz_payload = {
+            "parsed": False,
+            "mrz_status": mrz_status,
+            "status": mrz_status,
+            "message": "MRZ is not applicable for this visa document type."
+        }
+
         # Save Extracted Fields
         field_records = []
         for fname, val_dict in visa_fields.items():
@@ -1055,6 +1155,10 @@ class ScreeningOrchestrator:
             "checkpoint_id": checkpoint_id,
             "checkpoint_name": checkpoint_name,
             "document_type": "VISA",
+            "page_type": "VISA_VIGNETTE",
+            "is_identity_page": True,
+            "identity_page_detected": True,
+            "identity_page_message": "Visa document detected.",
             "masked_document_id": masked_id,
             "status": screening_rec.status,
             "risk_score": risk_res["risk_score"],
@@ -1071,7 +1175,8 @@ class ScreeningOrchestrator:
             "ela_heatmap_url": f"/api/v1/screenings/media/{screening_id}/heatmap" if tamper_res.get("heatmap_path") else None,
             "quality_assessment": quality_res,
             "extracted_fields": field_records,
-            "mrz_data": None,
+            "mrz_data": mrz_payload,
+            "mrz_status": mrz_status,
             "validation_findings": val_records,
             "tamper_findings": tamper_records,
             "tamper_summary": tamper_res,
@@ -1161,7 +1266,17 @@ class ScreeningOrchestrator:
             "ela_heatmap_url": None,
             "quality_assessment": quality_res,
             "extracted_fields": [],
-            "mrz_data": None,
+            "mrz_data": {
+                "parsed": False,
+                "mrz_status": "MRZ_INPUT_INSUFFICIENT",
+                "status": "MRZ_INPUT_INSUFFICIENT",
+                "message": "Image quality is insufficient to read machine-readable zone."
+            },
+            "mrz_status": "MRZ_INPUT_INSUFFICIENT",
+            "page_type": "UNKNOWN",
+            "is_identity_page": False,
+            "identity_page_detected": False,
+            "identity_page_message": "Image quality rejected by security quality gate.",
             "validation_findings": [],
             "tamper_findings": [],
             "tamper_summary": {"composite_tamper_score": 0.0, "findings_count": 0},
@@ -1244,6 +1359,10 @@ class ScreeningOrchestrator:
             "checkpoint_id": checkpoint_id,
             "checkpoint_name": checkpoint_name,
             "document_type": det_type,
+            "page_type": "UNSUPPORTED",
+            "is_identity_page": False,
+            "identity_page_detected": False,
+            "identity_page_message": rec_msg,
             "masked_document_id": "REJECTED",
             "status": "UNSUPPORTED_DOCUMENT",
             "risk_score": 80.0,
@@ -1256,7 +1375,13 @@ class ScreeningOrchestrator:
             "ela_heatmap_url": None,
             "quality_assessment": quality_res,
             "extracted_fields": [],
-            "mrz_data": None,
+            "mrz_data": {
+                "parsed": False,
+                "mrz_status": "MRZ_NOT_APPLICABLE",
+                "status": "MRZ_NOT_APPLICABLE",
+                "message": "MRZ not applicable for unsupported document type."
+            },
+            "mrz_status": "MRZ_NOT_APPLICABLE",
             "validation_findings": [],
             "tamper_findings": [],
             "tamper_summary": {"composite_tamper_score": 0.0, "findings_count": 0},

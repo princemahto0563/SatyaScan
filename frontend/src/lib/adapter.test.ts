@@ -429,4 +429,126 @@ console.log("Starting Frontend Adapter Unit Tests (Phase K)...");
   console.log("✓ Test 12: Canonical date normalization and invalid date rejection PASS");
 }
 
-console.log("\nALL 12 FRONTEND ADAPTER UNIT TESTS PASSED SUCCESSFULLY!");
+// Test 13: Label noise suppression (MAT /NOM:, SURNAME, GIVEN NAMES are rejected as identity values)
+{
+  const data = createBaseScreening("SAT-013");
+  data.extracted_fields = [
+    { field_name: "full_name", visual_value: "MAT /NOM:", mrz_value: null, confidence: 0.8 },
+    { field_name: "surname", visual_value: "SURNAME / NOM", mrz_value: null, confidence: 0.8 },
+  ];
+  data.mrz_data = null;
+  const model = mapScreeningResponseToReportViewModel(data);
+
+  assert.equal(model.document.fullName, "Not available");
+  assert.equal(model.document.surname, "Not available");
+  console.log("✓ Test 13: Label noise suppression PASS");
+}
+
+// Test 14: Equivalence matching in VIZ ↔ MRZ Cross-Check (INDIAN vs IND, PASSPORT vs P, MALE vs M)
+{
+  const data = createBaseScreening("SAT-014");
+  data.extracted_fields = [
+    { field_name: "nationality", visual_value: "INDIAN", mrz_value: "IND", confidence: 0.9 },
+    { field_name: "document_type", visual_value: "PASSPORT", mrz_value: "P", confidence: 0.9 },
+    { field_name: "sex", visual_value: "MALE", mrz_value: "M", confidence: 0.9 },
+  ];
+  const model = mapScreeningResponseToReportViewModel(data);
+
+  const natRow = model.crossCheckRows.find(r => r.fieldName === "nationality");
+  assert.ok(natRow);
+  assert.equal(natRow.status, "MATCH");
+
+  const docRow = model.crossCheckRows.find(r => r.fieldName === "document_type");
+  assert.ok(docRow);
+  assert.equal(docRow.status, "MATCH");
+
+  const sexRow = model.crossCheckRows.find(r => r.fieldName === "sex");
+  assert.ok(sexRow);
+  assert.equal(sexRow.status, "MATCH");
+  console.log("✓ Test 14: Equivalence matching in VIZ ↔ MRZ Cross-Check PASS");
+}
+
+// Test 15: Passport Cover detection and truthful MRZ / portrait state
+{
+  const data = createBaseScreening("SAT-015");
+  data.document_type = "PASSPORT";
+  (data as any).page_type = "PASSPORT_COVER";
+  (data as any).is_identity_page = false;
+  (data as any).identity_page_message = "Identity Page Not Detected — recapture required. Upload the passport biodata/identity page containing portrait and machine-readable information.";
+  (data as any).mrz_status = "MRZ_INPUT_INSUFFICIENT";
+  data.mrz_data = { parsed: false, status_message: "Identity Page Not Detected — recapture required" };
+  data.extracted_fields = [
+    { field_name: "document_type", visual_value: "PASSPORT", mrz_value: null, confidence: 0.9 },
+    { field_name: "document_number", visual_value: "Z1234567", mrz_value: null, confidence: 0.8 },
+  ];
+  data.face_result.status = "INPUT_FAILURE";
+  data.face_result.decision_state = "INPUT_FAILURE";
+  data.face_result.match_score = 0.0;
+  data.face_result.reason = "Usable identity portrait not detected in submitted document image.";
+
+  const model = mapScreeningResponseToReportViewModel(data);
+
+  assert.equal(model.document.pageType, "PASSPORT_COVER");
+  assert.equal(model.document.isIdentityPage, false);
+  assert.equal(model.mrz.statusBadge, "INPUT INSUFFICIENT");
+  assert.equal(model.face.result, "INPUT FAILURE");
+  
+  // Cross check rows must show "Identity page required"
+  const mrzDocNumRow = model.crossCheckRows.find(r => r.fieldName === "document_number");
+  assert.ok(mrzDocNumRow);
+  assert.equal(mrzDocNumRow.mrzValue, "Identity page required");
+  assert.equal(mrzDocNumRow.status, "VIZ_ONLY");
+  console.log("✓ Test 15: Passport Cover detection and truthful MRZ / portrait state PASS");
+}
+
+// Test 16: Visa without MRZ (MRZ_NOT_APPLICABLE)
+{
+  const data = createBaseScreening("SAT-016");
+  data.document_type = "VISA";
+  (data as any).page_type = "VISA_VIGNETTE";
+  (data as any).is_identity_page = true;
+  (data as any).mrz_status = "MRZ_NOT_APPLICABLE";
+  data.mrz_data = { parsed: false, status_message: "MRZ Not Applicable for this document type" };
+  data.extracted_fields = [
+    { field_name: "document_type", visual_value: "VISA", mrz_value: null, confidence: 0.9 },
+    { field_name: "document_number", visual_value: "V1234567", mrz_value: null, confidence: 0.8 },
+  ];
+
+  const model = mapScreeningResponseToReportViewModel(data);
+
+  assert.equal(model.mrz.statusBadge, "NOT APPLICABLE");
+  assert.equal(model.mrz.applicable, false);
+
+  const mrzDocNumRow = model.crossCheckRows.find(r => r.fieldName === "document_number");
+  assert.ok(mrzDocNumRow);
+  assert.equal(mrzDocNumRow.mrzValue, "Not applicable");
+  assert.equal(mrzDocNumRow.status, "NOT_APPLICABLE");
+  console.log("✓ Test 16: Visa without MRZ (MRZ_NOT_APPLICABLE) PASS");
+}
+
+// Test 17: True Mismatches remain MISMATCH
+{
+  const data = createBaseScreening("SAT-017");
+  data.extracted_fields = [
+    { field_name: "full_name", visual_value: "JOHN DOE", mrz_value: "JANE SMITH", confidence: 0.9 },
+    { field_name: "document_number", visual_value: "A1234567", mrz_value: "B9876543", confidence: 0.9 },
+    { field_name: "date_of_birth", visual_value: "1990-01-01", mrz_value: "1995-05-05", confidence: 0.9 },
+  ];
+  const model = mapScreeningResponseToReportViewModel(data);
+
+  const nameRow = model.crossCheckRows.find(r => r.fieldName === "full_name");
+  assert.ok(nameRow);
+  assert.equal(nameRow.status, "MISMATCH");
+
+  const numRow = model.crossCheckRows.find(r => r.fieldName === "document_number");
+  assert.ok(numRow);
+  assert.equal(numRow.status, "MISMATCH");
+
+  const dobRow = model.crossCheckRows.find(r => r.fieldName === "date_of_birth");
+  assert.ok(dobRow);
+  assert.equal(dobRow.status, "MISMATCH");
+  console.log("✓ Test 17: True Mismatches remain MISMATCH PASS");
+}
+
+console.log("\nALL 17 FRONTEND ADAPTER UNIT TESTS PASSED SUCCESSFULLY!");
+

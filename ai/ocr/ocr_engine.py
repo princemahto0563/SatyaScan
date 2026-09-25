@@ -111,6 +111,9 @@ class OCREngine:
 
         self._init_paddle()
 
+        import time
+        t_ocr_start = time.time()
+
         # Bounded working resolution for OCR (caps decompression-bomb/massive phone uploads to 1200px)
         MAX_OCR_DIM = 1200
         h, w = cv_img.shape[:2]
@@ -285,11 +288,51 @@ class OCREngine:
             except Exception as err:
                 print(f"[SatyaScan OCR] Tesseract fallback failed: {err}")
 
+        t_primary = time.time()
+        primary_ocr_ms = round((t_primary - t_ocr_start) * 1000.0, 1)
+        fallback_ocr_ms = 0.0
+
         # Extract structured fields with provenance and MRZ backfill
         structured_fields, field_mrz_candidates = self._extract_fields(raw_items, actual_engine, mrz_candidate_lines)
         for m_cand in field_mrz_candidates:
             if m_cand not in mrz_candidate_lines:
                 mrz_candidate_lines.append(m_cand)
+
+        # TARGETED RECOVERY PASS (Phase 4):
+        # If primary OCR confidence is low (< 0.45) OR essential fields are missing on non-cover documents:
+        populated_count = sum(1 for k, v in structured_fields.items() if v and k != "document_type")
+        has_mrz = len(mrz_candidate_lines) >= 2
+
+        if populated_count < 2 and not has_mrz:
+            try:
+                t_rec_start = time.time()
+                # Run targeted sparse PSM 11 pass on VIZ upper region
+                ih, iw = cv_img.shape[:2]
+                viz_crop = cv_img[int(ih * 0.15):int(ih * 0.75), int(iw * 0.20):]
+                if viz_crop.size > 0:
+                    gray_viz = cv2.cvtColor(viz_crop, cv2.COLOR_BGR2GRAY)
+                    rec_txt = pytesseract.image_to_string(gray_viz, config="--psm 6 -c load_system_dawg=0 -c load_freq_dawg=0")
+                    for line in rec_txt.splitlines():
+                        cl = line.strip()
+                        if cl and len(cl) >= 3:
+                            raw_items.append({
+                                "text": cl,
+                                "confidence": 0.85,
+                                "box": [[int(iw * 0.20), int(ih * 0.20)], [iw, int(ih * 0.20)], [iw, int(ih * 0.30)], [int(iw * 0.20), int(ih * 0.30)]]
+                            })
+                    # Re-extract fields with recovered items
+                    recovered_fields, recovered_mrz = self._extract_fields(raw_items, actual_engine, mrz_candidate_lines)
+                    for k, v in recovered_fields.items():
+                        if not structured_fields.get(k) and v:
+                            structured_fields[k] = v
+                    for m_cand in recovered_mrz:
+                        if m_cand not in mrz_candidate_lines:
+                            mrz_candidate_lines.append(m_cand)
+                fallback_ocr_ms = round((time.time() - t_rec_start) * 1000.0, 1)
+            except Exception:
+                pass
+
+        total_ocr_ms = round((time.time() - t_ocr_start) * 1000.0, 1)
 
         avg_confidence = (
             round(sum(item["confidence"] for item in raw_items) / len(raw_items), 3)
@@ -321,7 +364,10 @@ class OCREngine:
             "mrz_candidate_lines": mrz_candidate_lines,
             "extracted_fields": structured_fields,
             "ocr_status": ocr_status,
-            "ocr_reason": ocr_reason
+            "ocr_reason": ocr_reason,
+            "primary_ocr_ms": primary_ocr_ms,
+            "fallback_ocr_ms": fallback_ocr_ms,
+            "total_ocr_ms": total_ocr_ms
         }
 
     def _extract_fields(self, items: List[Dict[str, Any]], engine_name: Optional[str], mrz_candidate_lines: Optional[List[str]] = None) -> tuple[Dict[str, Any], List[str]]:
@@ -358,13 +404,22 @@ class OCREngine:
             'SURNAME', 'NOM', 'NOW', 'GIVEN', 'NAMES', 'NAWES', 'PRENOM', 'PRENOMS', 'PRENOW', 'PRENOUS', 'PRENOWS',
             'NAME', 'FULL', 'HOLDER', 'PASSPORT', 'PASSEPORT', 'REPUBLIC', 'INDIA', 'TYPE', 'COUNTRY',
             'CODE', 'PAYS', 'NATIONALITY', 'NATIONALITE', 'SEX', 'SEXE', 'GENDER', 'DATE', 'BIRTH', 'EXPIRY',
-            'ISSUE', 'PLACE', 'LIEU', 'DELIVERY', 'DELWRANCE', 'NAISSANCE', 'NASSANGE', 'NAISEANCE', 'ZE', 'EA'
+            'ISSUE', 'PLACE', 'LIEU', 'DELIVERY', 'DELWRANCE', 'NAISSANCE', 'NASSANGE', 'NAISEANCE', 'ZE', 'EA',
+            'MAT', 'MATRICULE', 'SIGNATURE', 'TITULAIRE', 'OFFICER', 'VISA', 'VIGNETTE'
         }
 
         def clean_name_tokens(raw_text: str) -> str:
-            tokens = re.findall(r'[A-Za-z]+', raw_text)
-            valid = [t.upper() for t in tokens if t.upper() not in LABEL_STOPWORDS and len(t) >= 2]
-            return ' '.join(valid)
+            clean = re.sub(r'[^A-Za-z\s]', ' ', raw_text)
+            tokens = clean.split()
+            valid = []
+            for t in tokens:
+                up = t.upper()
+                if len(up) < 2 or up in LABEL_STOPWORDS:
+                    continue
+                if len(up) == 2 and not any(v in up for v in ("A", "E", "I", "O", "U", "Y")):
+                    continue
+                valid.append(up)
+            return ' '.join(valid).strip()
 
         doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8})\b')
         date_pattern = re.compile(r'\b(\d{1,2}[\/\-\s][A-Za-z]{3,9}[\/\-\s]\d{4}|\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})\b')
@@ -473,9 +528,10 @@ class OCREngine:
                     }
                 elif any(k in text for k in ["FULL NAME", "NAME OF HOLDER"]):
                     cleaned = re.sub(r'.*(FULL NAME|NAME OF HOLDER)[\s\:\./]*', '', text).strip()
-                    if len(cleaned) > 3 and not re.search(r'\d', cleaned):
+                    cand = clean_name_tokens(cleaned)
+                    if cand and len(cand) > 3 and not re.search(r'\d', cand):
                         fields["full_name"] = {
-                            "value": cleaned,
+                            "value": cand,
                             "confidence": conf,
                             "ocr_engine": engine_name,
                             "bounding_box": box,
@@ -484,10 +540,10 @@ class OCREngine:
                         }
                     else:
                         for la_item in lookahead:
-                            la_raw = la_item["text"].strip()
-                            if len(la_raw) > 3 and not re.search(r'\d', la_raw) and not any(k in la_raw.upper() for k in ["PASSPORT", "REPUBLIC", "NATIONALITY"]):
+                            la_cand = clean_name_tokens(la_item["text"])
+                            if la_cand and len(la_cand) > 3 and not re.search(r'\d', la_cand) and not any(k in la_item["text"].upper() for k in ["PASSPORT", "REPUBLIC", "NATIONALITY"]):
                                 fields["full_name"] = {
-                                    "value": la_raw,
+                                    "value": la_cand,
                                     "confidence": la_item["confidence"],
                                     "ocr_engine": engine_name,
                                     "bounding_box": la_item["box"],
@@ -679,5 +735,15 @@ class OCREngine:
                         }
             except Exception as e:
                 pass
+
+        # Strict Label-Noise Suppression Gate (Phase 3):
+        # Guarantee that no field value is a label or noise
+        for fk in list(fields.keys()):
+            entry = fields[fk]
+            if entry and isinstance(entry, dict) and entry.get("value"):
+                v_str = str(entry["value"]).strip()
+                clean_alpha = re.sub(r'[^A-Za-z]', '', v_str).upper()
+                if clean_alpha in LABEL_STOPWORDS or len(v_str) < 2 or v_str.startswith(('/NOM', 'ME INOM', 'MAT /', 'MAT/')):
+                    fields[fk] = None
 
         return fields, mrz_lines

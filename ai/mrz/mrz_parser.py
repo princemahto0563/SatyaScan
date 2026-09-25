@@ -373,3 +373,49 @@ class MRZParser:
                 except ValueError:
                     pass
         return None
+
+    @classmethod
+    def determine_mrz_state(
+        cls,
+        doc_type: str,
+        page_type: str = "PASSPORT_IDENTITY_PAGE",
+        candidate_lines: Optional[List[str]] = None,
+        mrz_data: Optional[Dict[str, Any]] = None,
+        is_identity_page: bool = True
+    ) -> str:
+        """
+        Explicit 6-State MRZ State Machine (Phase 5):
+        - MRZ_VALID: parsed = true, all_checks_passed = true
+        - MRZ_INVALID: parsed = true, all_checks_passed = false (checksum failure)
+        - MRZ_NOT_APPLICABLE: document/page genuinely does not use MRZ (e.g. Visa without MRZ)
+        - MRZ_NOT_DETECTED: document type requires MRZ (e.g. Passport identity page), but 0 MRZ lines found
+        - MRZ_UNPARSED: MRZ candidate lines detected, but parser failed Doc 9303 syntax/structure
+        - MRZ_INPUT_INSUFFICIENT: Passport cover / address page / degraded image
+        """
+        doc_upper = (doc_type or "PASSPORT").upper()
+        page_upper = (page_type or "").upper()
+        candidates = candidate_lines or []
+
+        if page_upper == "PASSPORT_COVER" or not is_identity_page:
+            return "MRZ_INPUT_INSUFFICIENT"
+
+        if mrz_data and mrz_data.get("parsed"):
+            if mrz_data.get("all_checks_passed"):
+                return "MRZ_VALID"
+            else:
+                return "MRZ_INVALID"
+
+        if doc_upper == "VISA":
+            has_mrz_line = any(
+                l.replace(" ", "").upper().startswith(("V<", "P<")) or l.replace(" ", "").count("<") >= 4
+                for l in candidates
+            )
+            if not has_mrz_line:
+                return "MRZ_NOT_APPLICABLE"
+            else:
+                return "MRZ_UNPARSED"
+
+        if not candidates or len(candidates) == 0:
+            return "MRZ_NOT_DETECTED"
+
+        return "MRZ_UNPARSED"

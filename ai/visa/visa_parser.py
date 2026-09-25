@@ -29,19 +29,49 @@ class VisaParser:
         "JUL": "07", "AUG": "08", "SEP": "09", "OCT": "10", "NOV": "11", "DEC": "12"
     }
 
+    LABEL_STOPWORDS = {
+        'SURNAME', 'NOM', 'NOW', 'GIVEN', 'NAMES', 'NAWES', 'PRENOM', 'PRENOMS', 'PRENOW', 'PRENOUS', 'PRENOWS',
+        'NAME', 'FULL', 'HOLDER', 'PASSPORT', 'PASSEPORT', 'VISA', 'VIZUM', 'VIGNETTE',
+        'REPUBLIC', 'OF', 'COUNTRY', 'TYPE', 'CATEGORY', 'NATIONALITY', 'NATIONALITE',
+        'SEX', 'SEXE', 'GENDER', 'DATE', 'BIRTH', 'NAISSANCE', 'EXPIRY', 'VALID', 'UNTIL',
+        'FROM', 'ENTRIES', 'DURATION', 'STAY', 'PLACE', 'ISSUE', 'MAT', 'MATRICULE', 'SIGNATURE',
+        'TITULAIRE', 'OFFICER', 'REMARKS', 'REMARQUES', 'CONFERENCE', 'ATTENDANCE', 'PERMITTED'
+    }
+
     @classmethod
-    def parse_visa_fields(cls, raw_lines: List[Dict[str, Any]], ocr_engine_name: str = "PaddleOCR") -> Dict[str, Any]:
+    def _clean_name_tokens(cls, raw_text: str) -> str:
+        """Strips OCR noise and label stopwords from name candidates."""
+        if not raw_text:
+            return ""
+        clean = re.sub(r'[^A-Za-z\s]', ' ', raw_text)
+        tokens = clean.split()
+        valid = []
+        for t in tokens:
+            up = t.upper()
+            if len(up) < 2 or up in cls.LABEL_STOPWORDS:
+                continue
+            # Require at least one vowel for 2-letter words (rejects dk, qz, etc.)
+            if len(up) == 2 and not any(v in up for v in ("A", "E", "I", "O", "U", "Y")):
+                continue
+            valid.append(up)
+        return ' '.join(valid).strip()
+
+    @classmethod
+    def parse_visa_fields(cls, raw_lines: List[Dict[str, Any]], ocr_engine_name: str = "Tesseract") -> Dict[str, Any]:
         """
-        Parses visa fields from OCR token items.
-        Status for each field: FOUND | NOT_FOUND | LOW_CONFIDENCE | INVALID
+        Parses visa fields from OCR token items with robust multi-line pairing,
+        label-noise suppression, demographic block parsing, and truthful MRZ detection.
         """
         fields: Dict[str, Dict[str, Any]] = {
             "visa_number": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "visa_type": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "passport_number": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
+            "surname": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
+            "given_names": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "holder_name": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "nationality": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "date_of_birth": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
+            "sex": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "issue_date": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "valid_from": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
             "valid_until": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
@@ -49,68 +79,92 @@ class VisaParser:
             "stay_duration": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
         }
 
-        # Scan lines
-        for item in raw_lines:
+        for i, item in enumerate(raw_lines):
             raw = item.get("text", "").strip()
             text = raw.upper()
-            conf = item.get("confidence")
+            conf = item.get("confidence") or 0.90
             box = item.get("box")
 
-            # 1. Visa Number (Ensure number contains digits and does not capture keywords)
+            lookahead = raw_lines[i + 1 : min(len(raw_lines), i + 4)]
+
+            # Check Surname
+            if not fields["surname"]["value"] and any(k in text for k in ["SURNAME", "NOM"]):
+                cleaned = re.sub(r'.*(SURNAME|NOM)[\s\:\./]*', '', text).strip()
+                cand = cls._clean_name_tokens(cleaned)
+                if cand:
+                    fields["surname"] = {"value": cand, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                else:
+                    for la in lookahead:
+                        la_cand = cls._clean_name_tokens(la.get("text", ""))
+                        if la_cand and len(la_cand) >= 2 and not any(k in la.get("text", "").upper() for k in ["GIVEN", "PRENOM", "SEX", "PASSPORT", "VISA"]):
+                            fields["surname"] = {"value": la_cand, "status": "FOUND", "confidence": la.get("confidence") or conf, "ocr_engine": ocr_engine_name, "bounding_box": la.get("box"), "validation": "VALID"}
+                            break
+
+            # Check Given Names
+            if not fields["given_names"]["value"] and any(k in text for k in ["GIVEN", "PRENOM"]):
+                cleaned = re.sub(r'.*(GIVEN[\sA-Z]*|PRENOM[S]?)[\s\:\./]*', '', text).strip()
+                cand = cls._clean_name_tokens(cleaned)
+                if cand:
+                    fields["given_names"] = {"value": cand, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                else:
+                    for la in lookahead:
+                        la_cand = cls._clean_name_tokens(la.get("text", ""))
+                        if la_cand and len(la_cand) >= 2 and not any(k in la.get("text", "").upper() for k in ["SURNAME", "NOM", "SEX", "PASSPORT", "VISA"]):
+                            fields["given_names"] = {"value": la_cand, "status": "FOUND", "confidence": la.get("confidence") or conf, "ocr_engine": ocr_engine_name, "bounding_box": la.get("box"), "validation": "VALID"}
+                            break
+
+            # Check combined demographic line: [Sex] [DOB] [Nationality] [PassportNo]
+            demo_match = re.search(r'([MFI]|\bMALE\b|\bFEMALE\b)?\s*(\d{1,2}\s*[A-Za-z]{3,9}\s*\d{4})\s+([A-Za-z]+)\s+([A-Z0-9]{7,10})', text)
+            if demo_match:
+                s_code, d_str, n_str, p_str = demo_match.groups()
+                if not fields["sex"]["value"] and s_code:
+                    clean_s = "MALE" if s_code in ["M", "MALE", "I"] else "FEMALE"
+                    fields["sex"] = {"value": clean_s, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                if not fields["date_of_birth"]["value"] and d_str:
+                    fields["date_of_birth"] = {"value": d_str.strip(), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                if not fields["nationality"]["value"] and n_str:
+                    clean_n = "INDIAN" if n_str in ["INDIAN", "IND"] else n_str.strip()
+                    fields["nationality"] = {"value": clean_n, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                if not fields["passport_number"]["value"] and p_str:
+                    fields["passport_number"] = {"value": p_str.strip(), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+
+            # Check combined validity line: [VISA TYPE] [VALID FROM] [VALID UNTIL]
+            val_match = re.search(r'\b(TOURIST|STUDENT|BUSINESS|TRANSIT|CONFERENCE|VISITOR|DIPLOMATIC)\b.*?(\d{1,2}\s*[A-Za-z0-9]{3,9}\s*\d{4})\s+(\d{1,2}\s*[A-Za-z0-9]{3,9}\s*\d{4})', text)
+            if val_match:
+                vtype, d1, d2 = val_match.groups()
+                if not fields["visa_type"]["value"]:
+                    fields["visa_type"] = {"value": vtype, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                if not fields["valid_from"]["value"]:
+                    clean_d1 = d1.replace("0CT", "OCT").replace("0ct", "OCT")
+                    m_d1 = re.search(r'(\d{1,2}\s*[A-Za-z]{3,9}\s*\d{4})', clean_d1)
+                    val_d1 = m_d1.group(1) if m_d1 else clean_d1.strip()
+                    fields["valid_from"] = {"value": val_d1, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                if not fields["valid_until"]["value"]:
+                    clean_d2 = d2.replace("0CT", "OCT").replace("0ct", "OCT")
+                    m_d2 = re.search(r'(\d{1,2}\s*[A-Za-z]{3,9}\s*\d{4})', clean_d2)
+                    val_d2 = m_d2.group(1) if m_d2 else clean_d2.strip()
+                    fields["valid_until"] = {"value": val_d2, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+
+            # Visa Number
             if not fields["visa_number"]["value"]:
                 vnum_match = re.search(r'\b(?:VISA\s*(?:NO|NUMBER|NUM|#)?[\s\:\.]*|VIGNETTE\s*(?:NO|#)?[\s\:\.]*)([A-Z0-9]*\d[A-Z0-9]{5,11})\b', text)
                 if vnum_match:
                     val = vnum_match.group(1)
                     if val not in ["VIGNETTE", "PASSPORT", "CATEGORY", "OFFICIAL"]:
-                        st = "FOUND" if conf is None or conf >= 0.60 else "LOW_CONFIDENCE"
-                        fields["visa_number"] = {
-                            "value": val, "status": st, "confidence": conf,
-                            "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                        }
+                        fields["visa_number"] = {"value": val, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                else:
+                    vnum_gen = re.search(r'\b([A-Z]{1,3}\s*\d{7,8}|[A-Z]\d\s*\d{7})\b', text)
+                    if vnum_gen and "REPUBLIC" not in text and "IND" not in text and "PASSPORT" not in text:
+                        fields["visa_number"] = {"value": vnum_gen.group(1), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
 
-            # 2. Visa Type / Category
+            # Visa Type (standalone or combined)
             if not fields["visa_type"]["value"]:
-                if any(k in text for k in ["TYPE", "CATEGORY"]):
-                    for cat in ["TOURIST", "BUSINESS", "TRANSIT", "DIPLOMATIC", "OFFICIAL", "STUDENT", "EMPLOYMENT", "CONFERENCE", "MEDICAL", "VISITOR"]:
-                        if cat in text:
-                            st = "FOUND" if conf is None or conf >= 0.60 else "LOW_CONFIDENCE"
-                            fields["visa_type"] = {
-                                "value": cat, "status": st, "confidence": conf,
-                                "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                            }
-                            break
+                for vt in ["TOURIST", "STUDENT", "BUSINESS", "TRANSIT", "CONFERENCE", "VISITOR", "DIPLOMATIC", "OFFICIAL", "EMPLOYMENT", "ENTRY"]:
+                    if re.search(r'\b' + vt + r'\b', text):
+                        fields["visa_type"] = {"value": vt, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                        break
 
-            # 3. Passport Number Linkage
-            if not fields["passport_number"]["value"]:
-                if any(k in text for k in ["PASSPORT", "DOC NO", "PPT NO", "TRAVEL DOC"]):
-                    p_match = re.search(r'\b([A-Z][0-9]{7,8})\b', text)
-                    if p_match:
-                        st = "FOUND" if conf is None or conf >= 0.60 else "LOW_CONFIDENCE"
-                        fields["passport_number"] = {
-                            "value": p_match.group(1), "status": st, "confidence": conf,
-                            "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                        }
-
-            # 4. Valid From / Valid Until dates
-            if "FROM" in text or "VALID FROM" in text:
-                d = cls._extract_date(raw)
-                if d and not fields["valid_from"]["value"]:
-                    st = "FOUND" if conf is None or conf >= 0.60 else "LOW_CONFIDENCE"
-                    fields["valid_from"] = {
-                        "value": d, "status": st, "confidence": conf,
-                        "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                    }
-
-            if any(k in text for k in ["UNTIL", "VALID UNTIL", "EXPIRY", "EXPIRATION"]):
-                d = cls._extract_date(raw)
-                if d and not fields["valid_until"]["value"]:
-                    st = "FOUND" if conf is None or conf >= 0.60 else "LOW_CONFIDENCE"
-                    fields["valid_until"] = {
-                        "value": d, "status": st, "confidence": conf,
-                        "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                    }
-
-            # 5. Number of Entries
+            # Entries
             if not fields["entries"]["value"]:
                 if "MULT" in text or "MULTIPLE" in text:
                     fields["entries"] = {"value": "MULTIPLE", "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
@@ -119,34 +173,60 @@ class VisaParser:
                 elif "DOUBLE" in text or re.search(r'\b0?2\s*ENTRIES\b', text):
                     fields["entries"] = {"value": "DOUBLE", "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
 
-            # 6. Duration of stay
+            # Stay duration
             if not fields["stay_duration"]["value"]:
                 stay_match = re.search(r'\b(\d{1,3})\s*(DAYS|DAY|MONTHS|MONTH)\b', text)
                 if stay_match:
-                    fields["stay_duration"] = {
-                        "value": f"{stay_match.group(1)} {stay_match.group(2)}",
-                        "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name,
-                        "bounding_box": box, "validation": "VALID"
-                    }
+                    fields["stay_duration"] = {"value": f"{stay_match.group(1)} {stay_match.group(2)}", "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
 
-            # 7. Nationality
+            # Standalone fallback date extractions
+            if not fields["valid_from"]["value"] and ("FROM" in text or "VALID FROM" in text):
+                d = cls._extract_date(raw)
+                if d:
+                    fields["valid_from"] = {"value": d, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+            if not fields["valid_until"]["value"] and any(k in text for k in ["UNTIL", "VALID UNTIL", "EXPIRY", "EXPIRATION"]):
+                d = cls._extract_date(raw)
+                if d:
+                    fields["valid_until"] = {"value": d, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+            if not fields["date_of_birth"]["value"] and any(k in text for k in ["BIRTH", "DOB", "NAISSANCE"]):
+                d = cls._extract_date(raw)
+                if d:
+                    fields["date_of_birth"] = {"value": d, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
             if not fields["nationality"]["value"] and any(k in text for k in ["NATIONALITY", "CITIZENSHIP"]):
-                for nat in ["IND", "INDIAN", "USA", "GBR", "CAN", "AUS", "FRA", "DEU", "JPN", "SGP", "ARE"]:
+                for nat in ["INDIAN", "IND", "USA", "GBR", "CAN", "AUS", "FRA", "DEU", "JPN", "SGP", "ARE"]:
                     if nat in text:
-                        fields["nationality"] = {
-                            "value": nat, "status": "FOUND", "confidence": conf,
-                            "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                        }
+                        fields["nationality"] = {"value": "INDIAN" if nat in ["INDIAN", "IND"] else nat, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                         break
+            if not fields["passport_number"]["value"] and any(k in text for k in ["PASSPORT", "DOC NO", "PPT NO", "PASSEPORT"]):
+                cleaned_ppt = re.sub(r'.*(?:PASSPORT|DOC|PPT|PASSEPORT)[\s\:\./#]*(?:NO|NUMBER)?[\s\:\./]*', '', text).strip()
+                p_match = re.search(r'\b([A-Z0-9]{7,10})\b', cleaned_ppt)
+                if p_match and p_match.group(1) not in ["PASSPORT", "PASSEPORT", "REPUBLIC"]:
+                    fields["passport_number"] = {"value": p_match.group(1), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                else:
+                    for token in re.findall(r'\b([A-Z0-9]{7,10})\b', text):
+                        if token not in ["PASSPORT", "PASSEPORT", "REPUBLIC", "CATEGORY", "OFFICIAL"]:
+                            fields["passport_number"] = {"value": token, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                            break
 
-            # 8. Holder Name
-            if not fields["holder_name"]["value"] and any(k in text for k in ["NAME", "HOLDER", "SURNAME"]):
-                cleaned = re.sub(r'(NAME|HOLDER|SURNAME|OF HOLDER|FULL NAME)[\s\:\.]*', '', text).strip()
-                if len(cleaned) > 3 and not re.search(r'\d', cleaned):
-                    fields["holder_name"] = {
-                        "value": cleaned, "status": "FOUND", "confidence": conf,
-                        "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"
-                    }
+        # Synthesize Full Name / Holder Name
+        g_val = fields["given_names"]["value"]
+        s_val = fields["surname"]["value"]
+        if g_val and s_val:
+            fields["holder_name"] = {"value": f"{g_val} {s_val}".strip(), "status": "FOUND", "confidence": min(fields["given_names"]["confidence"] or 0.9, fields["surname"]["confidence"] or 0.9), "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "VALID"}
+        elif s_val:
+            fields["holder_name"] = {"value": s_val, "status": "FOUND", "confidence": fields["surname"]["confidence"], "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "VALID"}
+        elif g_val:
+            fields["holder_name"] = {"value": g_val, "status": "FOUND", "confidence": fields["given_names"]["confidence"], "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "VALID"}
+
+        # Strict Label-Noise Suppression Gate: purge any remaining label tokens
+        for fk in list(fields.keys()):
+            val = fields[fk].get("value")
+            if val is not None:
+                val_str = str(val).strip()
+                clean_alpha = re.sub(r'[^A-Za-z]', '', val_str).upper()
+                if clean_alpha in cls.LABEL_STOPWORDS or len(val_str) < 2 or val_str.startswith(('/NOM', 'ME INOM', 'MAT /')):
+                    fields[fk]["value"] = None
+                    fields[fk]["status"] = "NOT_FOUND"
 
         return fields
 

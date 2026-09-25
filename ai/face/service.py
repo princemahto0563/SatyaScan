@@ -397,8 +397,8 @@ class FaceVerificationService:
                 "confidence": "NONE",
                 "pad_status": "NOT_AVAILABLE",
                 "similarity_score": 0.0,
-                "reason": "Unable to locate a distinct face in document photograph.",
-                "recommendation": "Document image does not contain a usable facial portrait. Re-capture document under balanced illumination.",
+                "reason": "Usable identity portrait not detected in submitted document image.",
+                "recommendation": "Usable identity portrait not detected in submitted document image. Upload the passport biodata/identity page containing portrait and machine-readable information.",
                 "doc_face_quality": doc_quality,
                 "provider": self.version,
                 "provider_type": provider_type,
@@ -410,9 +410,9 @@ class FaceVerificationService:
                     "presented_face_count": 0,
                     "provider_type": provider_type,
                     "requires_manual_inspection": True,
-                    "decision_explanation": "Unable to locate a distinct face in document photograph."
+                    "decision_explanation": "Usable identity portrait not detected in submitted document image."
                 },
-                "disclaimer": "Document image does not contain a usable facial portrait."
+                "disclaimer": "Usable identity portrait not detected in submitted document image."
             }
 
         # 2. Quality Gate on Live Capture
@@ -427,8 +427,8 @@ class FaceVerificationService:
                 "confidence": "NONE",
                 "pad_status": "NOT_AVAILABLE",
                 "similarity_score": 0.0,
-                "reason": "Unable to locate face in live selfie. Ensure face is centered and illuminated.",
-                "recommendation": "No face found in presented selfie capture. Ensure camera faces subject directly.",
+                "reason": "Live facial capture unavailable.",
+                "recommendation": "Live facial capture unavailable. Please ensure camera faces subject directly under neutral lighting.",
                 "doc_face_quality": doc_quality,
                 "live_face_quality": live_quality_eval,
                 "provider": self.version,
@@ -441,7 +441,7 @@ class FaceVerificationService:
                     "presented_face_count": 0,
                     "provider_type": provider_type,
                     "requires_manual_inspection": True,
-                    "decision_explanation": "No face found in presented selfie."
+                    "decision_explanation": "Live facial capture unavailable."
                 }
             }
 
