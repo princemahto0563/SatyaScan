@@ -54,9 +54,13 @@ class MRZParser:
         return (observed_digit == expected, expected)
 
     @classmethod
-    def normalize_mrz_line(cls, line: str, is_line1: bool = True) -> str:
+    def normalize_mrz_line(cls, line: Any, is_line1: bool = True) -> str:
         """Clean and normalize potential OCR noise in MRZ line to exact 44 TD3 chars."""
-        line = line.strip().upper()
+        if not line:
+            return ""
+        if isinstance(line, dict):
+            line = line.get("text", "")
+        line = str(line).strip().upper()
         # Replace common OCR misreads in MRZ filler
         line = re.sub(r'[\s«»\-_/]+', '<', line)
         line = re.sub(r'[^A-Z0-9<]', '<', line)
@@ -78,29 +82,56 @@ class MRZParser:
                 line = "P<IND" + line[5:]
             # Clean trailing K misread as chevron directly following given names and preceding filler chevrons
             line = re.sub(r'<<([A-Z0-9]+)K<', r'<<\1<<', line)
+            # After primary and secondary identifiers, clean trailing filler noise (K, E, X, C)
+            parts = line.split("<<")
+            if len(parts) >= 2:
+                # Keep up to second part and clean trailing chevrons
+                prefix = "<<".join(parts[:2])
+                suffix = "<<" + "<<".join(parts[2:]) if len(parts) > 2 else ""
+                suffix_clean = re.sub(r'[KEXC<]', '<', suffix)
+                line = prefix + suffix_clean
         else:
             # Line 2: find start of 9-char document number followed by digit check
-            # Often begins with uppercase letter followed by digits
             m = re.search(r'[A-Z0-9<]{9}[0-9]', line)
             if m and m.start() > 0:
                 line = line[m.start():]
+            # In line 2, positions 28..42 (optional data filler) often misread chevrons as C, K, E, X
+            if len(line) >= 30:
+                prefix = line[:28]
+                if len(line) >= 44:
+                    mid = re.sub(r'[KEXC<]', '<', line[28:42])
+                    end = line[42:]
+                    line = prefix + mid + end
+                else:
+                    mid = re.sub(r'[KEXC<]', '<', line[28:])
+                    line = prefix + mid
 
-        # Truncate or pad to exactly 44 characters (only pad if line has reasonable length >= 40)
+        # Truncate or pad to exactly 44 characters (only pad if line has reasonable length >= 35)
         if len(line) > 44:
             line = line[:44]
-        elif len(line) >= 40:
+        elif len(line) >= 35:
             line = line.ljust(44, '<')
 
         return line
 
     @classmethod
-    def parse_td3(cls, line1: str, line2: str) -> Dict[str, Any]:
+    def parse_td3(cls, line1: Any, line2: Any) -> Dict[str, Any]:
         """
         Parses 2 lines of TD3 MRZ and verifies all internal check digits.
         Normalizes OCR variations and ensures 44-character line lengths.
+        Auto-swaps lines if line2 is the header line or line1 is the data line.
         """
-        l1 = cls.normalize_mrz_line(line1, is_line1=True)
-        l2 = cls.normalize_mrz_line(line2, is_line1=False)
+        s1 = line1.get("text", "") if isinstance(line1, dict) else str(line1 or "")
+        s2 = line2.get("text", "") if isinstance(line2, dict) else str(line2 or "")
+
+        # Auto-detect if line order is reversed
+        s1_clean = s1.replace(" ", "").upper()
+        s2_clean = s2.replace(" ", "").upper()
+        if not s1_clean.startswith(("P<", "P0", "V<")) and s2_clean.startswith(("P<", "P0", "V<")):
+            s1, s2 = s2, s1
+
+        l1 = cls.normalize_mrz_line(s1, is_line1=True)
+        l2 = cls.normalize_mrz_line(s2, is_line1=False)
 
         if len(l1) != 44 or len(l2) != 44:
             return {

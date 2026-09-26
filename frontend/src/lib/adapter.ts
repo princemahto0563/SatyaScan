@@ -281,18 +281,28 @@ function resolveFieldValue(
         const norm = normalizeFieldValue(matched.visual_value, "", canonicalName);
         if (norm) return norm;
       }
-      if (matched.mrz_value) {
-        const norm = normalizeFieldValue(matched.mrz_value, "", canonicalName);
-        if (norm) return norm;
-      }
       if (matched.field_value) {
         const norm = normalizeFieldValue(matched.field_value, "", canonicalName);
+        if (norm) return norm;
+      }
+      if (matched.mrz_value) {
+        const norm = normalizeFieldValue(matched.mrz_value, "", canonicalName);
         if (norm) return norm;
       }
     }
   }
 
-  // 3. Fallback to mrzData if available even if partial
+  // 2. Check MRZ decoded data if parsed
+  if (mrzData && mrzData.parsed) {
+    for (const a of aliases) {
+      if (mrzData[a]) {
+        const norm = normalizeFieldValue(mrzData[a], "", canonicalName);
+        if (norm) return norm;
+      }
+    }
+  }
+
+  // 3. Fallback to mrzData even if partial
   if (mrzData) {
     for (const a of aliases) {
       if (mrzData[a]) {
@@ -507,7 +517,17 @@ function buildCrossCheckRows(
 
     const vizVal = normalizeFieldValue(fieldMatch?.visual_value || fieldMatch?.field_value, "", def.key);
     const mrzVal = normalizeFieldValue(mrzValRaw || fieldMatch?.mrz_value, "", def.key);
-    const conf = fieldMatch?.confidence ?? (vizVal ? 0.95 : 0.0);
+
+    let conf = 0.0;
+    if (vizVal && mrzVal) {
+      conf = fieldMatch?.confidence ?? 0.98;
+    } else if (vizVal) {
+      conf = fieldMatch?.confidence ?? 0.90;
+    } else if (mrzVal) {
+      conf = 0.99;
+    } else {
+      conf = 0.0;
+    }
 
     let status: CrossCheckRow["status"] = "NOT_PRESENT";
     let statusLabel = "Not Present";
@@ -546,12 +566,8 @@ function buildCrossCheckRows(
         displayMrzValue = "Not applicable";
       } else if (isInputInsufficient) {
         displayMrzValue = "Identity page required";
-      } else if (isMrzNotDetected) {
-        displayMrzValue = "Not detected";
-      } else if (mrzData?.parsed) {
-        displayMrzValue = "Not present in MRZ";
       } else {
-        displayMrzValue = "MRZ unparsed";
+        displayMrzValue = "—";
       }
     }
 

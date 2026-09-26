@@ -342,7 +342,10 @@ class ScreeningOrchestrator:
 
         # 3. VIZ vs MRZ Cross-Check Findings
         viz_mrz_findings = MRZParser.cross_validate_viz(mrz_res, {
-            "document_number": extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else None,
+            "document_number": (
+                (extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else None) or
+                (extracted_fields_dict.get("document_number", {}).get("value") if extracted_fields_dict.get("document_number") else None)
+            ),
             "date_of_birth": extracted_fields_dict.get("date_of_birth", {}).get("value") if extracted_fields_dict.get("date_of_birth") else None,
             "date_of_expiry": extracted_fields_dict.get("date_of_expiry", {}).get("value") if extracted_fields_dict.get("date_of_expiry") else None,
             "full_name": extracted_fields_dict.get("full_name", {}).get("value") if extracted_fields_dict.get("full_name") else None
@@ -375,7 +378,8 @@ class ScreeningOrchestrator:
 
         doc_num_to_check = (
             (mrz_res.get("document_number") if mrz_res.get("parsed") else None) or
-            (extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else None)
+            (extracted_fields_dict.get("passport_number", {}).get("value") if extracted_fields_dict.get("passport_number") else None) or
+            (extracted_fields_dict.get("document_number", {}).get("value") if extracted_fields_dict.get("document_number") else None)
         )
         if doc_num_to_check:
             clean_num = doc_num_to_check.replace(" ", "").upper()

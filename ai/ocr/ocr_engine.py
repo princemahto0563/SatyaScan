@@ -198,22 +198,33 @@ class OCREngine:
                 print(f"[SatyaScan OCR] PaddleOCR inference error: {e}, falling back to Tesseract.")
                 raw_items = []
 
-        # FAST MRZ STRIP SCAN (bottom 30% of document):
-        # Runs a dedicated ~100ms whitelist pass to capture authentic 44-character TD3 lines with all check digits
+        # COMPREHENSIVE MRZ SCAN:
+        # Runs full image pass and targeted strip passes to capture authentic TD3 lines across booklet spreads and crops
         try:
             ih, iw = cv_img.shape[:2]
-            mrz_y0 = int(ih * 0.70)
-            mrz_crop = cv_img[mrz_y0:, :]
-            gray_mrz = cv2.cvtColor(mrz_crop, cv2.COLOR_BGR2GRAY)
-            crop_txt = pytesseract.image_to_string(
-                gray_mrz,
-                config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< -c load_system_dawg=0 -c load_freq_dawg=0"
-            )
-            for line in crop_txt.splitlines():
-                clean_l = line.strip().upper().replace(" ", "")
-                if ("<" in clean_l or clean_l.startswith("P") or clean_l.startswith("V")) and len(clean_l) >= 20:
+            gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+
+            # 1. Full image text scan (captures all text lines across columns/spreads)
+            full_txt = pytesseract.image_to_string(gray)
+            for line in full_txt.splitlines():
+                clean_l = re.sub(r'[\s]+', '', line).strip().upper()
+                if (clean_l.startswith(("P<", "V<", "P«")) or clean_l.count("<") >= 3 or ("<" in clean_l and any(k in clean_l for k in ["IND", "USA", "GBR", "CAN", "AUS"]))) and len(clean_l) >= 15:
                     if clean_l not in mrz_candidate_lines:
                         mrz_candidate_lines.append(clean_l)
+
+            # 2. Targeted crop scans: bottom 30% strip AND middle 30% strip (for booklet spreads)
+            for crop_region in [cv_img[int(ih * 0.70):, :], cv_img[int(ih * 0.35):int(ih * 0.65), :]]:
+                if crop_region.size > 0:
+                    gray_crop = cv2.cvtColor(crop_region, cv2.COLOR_BGR2GRAY)
+                    crop_txt = pytesseract.image_to_string(
+                        gray_crop,
+                        config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< -c load_system_dawg=0 -c load_freq_dawg=0"
+                    )
+                    for line in crop_txt.splitlines():
+                        clean_l = re.sub(r'[\s]+', '', line).strip().upper()
+                        if (clean_l.startswith(("P<", "V<", "P«")) or clean_l.count("<") >= 3 or ("<" in clean_l and any(k in clean_l for k in ["IND", "USA", "GBR", "CAN", "AUS"]))) and len(clean_l) >= 15:
+                            if clean_l not in mrz_candidate_lines:
+                                mrz_candidate_lines.append(clean_l)
         except Exception as mrz_err:
             pass
 
@@ -390,14 +401,10 @@ class OCREngine:
 
         mrz_lines: List[str] = []
 
-        # Find MRZ candidate lines (lines starting with P< or containing multiple consecutive '<' or TD3 patterns)
+        # Find MRZ candidate lines (lines starting with P<, V< or containing chevrons)
         for item in items:
             t = item["text"].replace(" ", "").upper()
-            if (
-                t.startswith(("P<", "P0", "P«", "V<"))
-                or t.count("<") >= 3
-                or (len(t) >= 20 and bool(re.search(r'[A-Z0-9<]{9}[0-9]', t)))
-            ) and len(t) >= 15:
+            if (t.startswith(("P<", "P0", "P«", "V<")) or t.count("<") >= 2) and len(t) >= 15:
                 mrz_lines.append(item["text"])
 
         LABEL_STOPWORDS = {
@@ -419,7 +426,11 @@ class OCREngine:
             tokens = re.findall(r'[A-Za-z]+', s.upper())
             if not tokens:
                 return True
-            return all(t in LABEL_STOPWORDS for t in tokens)
+            if any(t in {'INDIA', 'PASSPORT', 'REPUBLIC', 'PAGE', 'COVER', 'OBSERVATION', 'CITIZEN', 'GOVERNMENT', 'MINISTRY', 'WORLD', 'FAMILY', 'HOLDER', 'PROSPEROUS', 'SAFER'} for t in tokens):
+                return True
+            if len(tokens) > 3:
+                return True
+            return any(t in LABEL_STOPWORDS for t in tokens) if len(tokens) == 1 else all(t in LABEL_STOPWORDS for t in tokens)
 
         def clean_name_tokens(raw_text: str) -> str:
             if not raw_text:
@@ -446,6 +457,7 @@ class OCREngine:
             return res
 
         doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8})\b')
+        doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8}|[A-Z0-9][0-9]{7}|[0-9]{8})\b')
         date_pattern = re.compile(r'\b(\d{1,2}[\/\-\s][A-Za-z]{3,9}[\/\-\s]\d{4}|\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})\b')
 
         for i, item in enumerate(items):
@@ -460,32 +472,37 @@ class OCREngine:
             # 1. Passport Number
             if not fields["passport_number"]:
                 match = doc_num_pattern.search(text)
-                if match and "REPUBLIC" not in text and "PASSPORT" not in text:
-                    fields["passport_number"] = {
-                        "value": match.group(1),
-                        "confidence": conf,
-                        "ocr_engine": engine_name,
-                        "bounding_box": box,
-                        "validation": "VALID",
-                        "source": "VIZ"
-                    }
-                elif any(k in text for k in ["PASSPORT NO", "PASSPORT NUMBER", "DOCUMENT NO", "PASSEPORT"]):
-                    for la_item in lookahead:
-                        la_match = doc_num_pattern.search(la_item["text"].upper())
-                        if la_match:
+                if match:
+                    val = match.group(1)
+                    if not any(sw in val for sw in ["REPUBLIC", "PASSPORT", "INDIA"]):
+                        if any(k in text for k in ["IND", "PASSPORT", "NO", "P "]) or len(text.split()) <= 4:
                             fields["passport_number"] = {
-                                "value": la_match.group(1),
-                                "confidence": la_item["confidence"],
+                                "value": val,
+                                "confidence": conf,
                                 "ocr_engine": engine_name,
-                                "bounding_box": la_item["box"],
+                                "bounding_box": box,
                                 "validation": "VALID",
                                 "source": "VIZ"
                             }
-                            break
+                elif any(k in text for k in ["PASSPORT NO", "PASSPORT NUMBER", "DOCUMENT NO", "PASSEPORT", "PASSPORT", "IND"]):
+                    for la_item in lookahead:
+                        la_match = doc_num_pattern.search(la_item["text"].upper())
+                        if la_match:
+                            val = la_match.group(1)
+                            if not any(sw in val for sw in ["REPUBLIC", "PASSPORT", "INDIA"]):
+                                fields["passport_number"] = {
+                                    "value": val,
+                                    "confidence": la_item["confidence"],
+                                    "ocr_engine": engine_name,
+                                    "bounding_box": la_item["box"],
+                                    "validation": "VALID",
+                                    "source": "VIZ"
+                                }
+                                break
 
             # 2. Surname
-            if not fields["surname"] and any(k in text for k in ["SURNAME", "NOM"]):
-                cleaned_line = re.sub(r'.*(SURNAME|NOM)[\s\:\./]*', '', text).strip()
+            if not fields["surname"] and any(k in text for k in ["SURNAME", "SUMAME", "SURNAM", "NOM", "उपपनाम"]):
+                cleaned_line = re.sub(r'.*(SURNAME|SUMAME|SURNAM|NOM|उपपनाम)[\s\:\./]*', '', text).strip()
                 same_cand = clean_name_tokens(cleaned_line)
                 if same_cand:
                     fields["surname"] = {
@@ -499,7 +516,7 @@ class OCREngine:
                 else:
                     for la_item in lookahead:
                         cand = clean_name_tokens(la_item["text"])
-                        if cand:
+                        if cand and not any(k in la_item["text"].upper() for k in ["GIVEN", "PRENOM", "DATE", "SEX", "PASSPORT"]):
                             fields["surname"] = {
                                 "value": cand.split()[0],
                                 "confidence": la_item["confidence"],
@@ -511,7 +528,7 @@ class OCREngine:
                             break
 
             # 3. Given Names
-            if not fields["given_names"] and any(k in text for k in ["GIVEN", "PRENOM"]):
+            if not fields["given_names"] and any(k in text for k in ["GIVEN", "GIVENNAMES", "PRENOM", "PRENOMS"]):
                 cleaned_line = re.sub(r'.*(GIVEN[\sA-Z]*|PRENOM[S]?)[\s\:\./]*', '', text).strip()
                 same_cand = clean_name_tokens(cleaned_line)
                 if same_cand:
@@ -526,7 +543,7 @@ class OCREngine:
                 else:
                     for la_item in lookahead:
                         cand = clean_name_tokens(la_item["text"])
-                        if cand:
+                        if cand and not any(k in la_item["text"].upper() for k in ["DATE", "SEX", "BIRTH", "PASSPORT", "IND"]):
                             fields["given_names"] = {
                                 "value": cand,
                                 "confidence": la_item["confidence"],
@@ -577,7 +594,7 @@ class OCREngine:
                                 break
 
             # 5. Date of Birth
-            if not fields["date_of_birth"] and any(k in text for k in ["BIRTH", "DOB", "NAISSANCE", "JANM"]):
+            if not fields["date_of_birth"] and any(k in text for k in ["BIRTH", "BITH", "DOB", "NAISSANCE", "JANM"]):
                 match = date_pattern.search(raw)
                 if match:
                     fields["date_of_birth"] = {
@@ -603,7 +620,7 @@ class OCREngine:
                             break
 
             # 6. Date of Expiry
-            if not fields["date_of_expiry"] and any(k in text for k in ["EXPIRY", "EXPIRATION", "VALID UNTIL", "EXP"]):
+            if not fields["date_of_expiry"] and any(k in text for k in ["EXPIRY", "EXPIRATION", "VALID UNTIL", "EXP", "DATO UT EXPIRY"]):
                 match = date_pattern.search(raw)
                 if match:
                     fields["date_of_expiry"] = {
@@ -657,16 +674,49 @@ class OCREngine:
                             break
 
             # 8. Sex
-            if not fields["sex"] and re.search(r'\b(SEX|GENDER|SEXE)\b', text):
-                m = re.search(r'\b(MALE|FEMALE)\b', text)
-                if m:
-                    fields["sex"] = {"value": m.group(1), "confidence": conf, "ocr_engine": engine_name, "bounding_box": box, "validation": "VALID", "source": "VIZ"}
-                else:
-                    for la_item in lookahead:
-                        m_la = re.search(r'\b(MALE|FEMALE)\b', la_item["text"].upper())
-                        if m_la:
-                            fields["sex"] = {"value": m_la.group(1), "confidence": la_item["confidence"], "ocr_engine": engine_name, "bounding_box": la_item["box"], "validation": "VALID", "source": "VIZ"}
-                            break
+            if not fields["sex"]:
+                if re.search(r'\b(SEX|GENDER|SEXE|SOX)\b', text):
+                    m = re.search(r'\b(MALE|FEMALE)\b', text)
+                    if not m:
+                        m = re.search(r'\b([MF])\b', text)
+                    if m:
+                        val = "MALE" if m.group(1) in ("MALE", "M") else "FEMALE"
+                        fields["sex"] = {"value": val, "confidence": conf, "ocr_engine": engine_name, "bounding_box": box, "validation": "VALID", "source": "VIZ"}
+                    else:
+                        for la_item in lookahead:
+                            m_la = re.search(r'\b(MALE|FEMALE)\b', la_item["text"].upper())
+                            if not m_la:
+                                m_la = re.search(r'\b([MF])\b', la_item["text"].upper())
+                            if m_la:
+                                val = "MALE" if m_la.group(1) in ("MALE", "M") else "FEMALE"
+                                fields["sex"] = {"value": val, "confidence": la_item["confidence"], "ocr_engine": engine_name, "bounding_box": la_item["box"], "validation": "VALID", "source": "VIZ"}
+                                break
+
+        # Chronological Date Pass: If date_of_birth or date_of_expiry still missing, inspect all dates
+        if not fields["date_of_birth"] or not fields["date_of_expiry"]:
+            all_found_dates = []
+            for item in items:
+                for m in date_pattern.finditer(item["text"]):
+                    d_str = m.group(1)
+                    yr_m = re.search(r'\b(19\d{2}|20\d{2})\b', d_str)
+                    if yr_m:
+                        all_found_dates.append((int(yr_m.group(1)), d_str, item))
+            for yr, d_str, it in all_found_dates:
+                if yr < 2018 and not fields["date_of_birth"]:
+                    fields["date_of_birth"] = {
+                        "value": d_str, "confidence": it["confidence"], "ocr_engine": engine_name,
+                        "bounding_box": it["box"], "validation": "VALID", "source": "VIZ"
+                    }
+                    if not fields["sex"]:
+                        if re.search(r'\bM\b', it["text"].upper()):
+                            fields["sex"] = {"value": "MALE", "confidence": it["confidence"], "ocr_engine": engine_name, "bounding_box": it["box"], "validation": "VALID", "source": "VIZ"}
+                        elif re.search(r'\bF\b', it["text"].upper()):
+                            fields["sex"] = {"value": "FEMALE", "confidence": it["confidence"], "ocr_engine": engine_name, "bounding_box": it["box"], "validation": "VALID", "source": "VIZ"}
+                elif yr >= 2025 and not fields["date_of_expiry"]:
+                    fields["date_of_expiry"] = {
+                        "value": d_str, "confidence": it["confidence"], "ocr_engine": engine_name,
+                        "bounding_box": it["box"], "validation": "VALID", "source": "VIZ"
+                    }
 
         # Final pass: If full_name is missing but given_names and surname exist
         if not fields["full_name"] and fields["given_names"] and fields["surname"]:
@@ -688,12 +738,36 @@ class OCREngine:
                 if ml not in all_mrz:
                     all_mrz.append(ml)
 
-        if len(all_mrz) >= 2:
+        # Filter genuine MRZ candidate lines with chevrons
+        valid_mrz = [ml for ml in all_mrz if ml.replace(" ", "").upper().startswith(("P<", "P0", "P«", "V<")) or ml.count("<") >= 2]
+
+        if len(valid_mrz) >= 2:
             try:
                 from ai.mrz.mrz_parser import MRZParser
                 mrz_info = None
-                for i in range(len(all_mrz) - 1):
-                    attempt = MRZParser.parse_td3(all_mrz[i], all_mrz[i+1])
+
+                def _score_pair(line_a: str, line_b: str) -> int:
+                    score = 0
+                    ua = line_a.replace(" ", "").upper()
+                    ub = line_b.replace(" ", "").upper()
+                    if ua.startswith(("P<", "V<")): score += 10
+                    if ub.startswith(("P<", "V<")): score += 10
+                    if "<<" in ua: score += 5
+                    if "<<" in ub: score += 5
+                    if "IND" in ua: score += 3
+                    if "IND" in ub: score += 3
+                    score += min(ua.count("<"), 8) + min(ub.count("<"), 8)
+                    return score
+
+                pairs = []
+                for i in range(len(valid_mrz)):
+                    for j in range(i + 1, len(valid_mrz)):
+                        pairs.append((valid_mrz[i], valid_mrz[j], _score_pair(valid_mrz[i], valid_mrz[j])))
+
+                pairs.sort(key=lambda p: p[2], reverse=True)
+
+                for l1, l2, _ in pairs:
+                    attempt = MRZParser.parse_td3(l1, l2)
                     if attempt.get("all_checks_passed"):
                         mrz_info = attempt
                         break
@@ -704,45 +778,69 @@ class OCREngine:
                     if not fields["passport_number"] and mrz_info.get("document_number"):
                         fields["passport_number"] = {
                             "value": mrz_info["document_number"],
-                            "confidence": 0.95,
+                            "confidence": 0.99,
                             "ocr_engine": engine_name,
                             "bounding_box": None,
                             "validation": "VALID",
                             "source": "MRZ_VERIFIED"
                         }
-                    if not fields["surname"] and mrz_info.get("surname"):
-                        fields["surname"] = {
-                            "value": mrz_info["surname"],
-                            "confidence": 0.95,
-                            "ocr_engine": engine_name,
-                            "bounding_box": None,
-                            "validation": "VALID",
-                            "source": "MRZ_VERIFIED"
-                        }
-                    if not fields["given_names"] and mrz_info.get("given_names"):
-                        fields["given_names"] = {
-                            "value": mrz_info["given_names"],
-                            "confidence": 0.95,
-                            "ocr_engine": engine_name,
-                            "bounding_box": None,
-                            "validation": "VALID",
-                            "source": "MRZ_VERIFIED"
-                        }
-                    if not fields["full_name"]:
-                        fn = mrz_info.get("full_name") or f"{mrz_info.get('given_names', '')} {mrz_info.get('surname', '')}".strip()
-                        if fn:
-                            fields["full_name"] = {
-                                "value": fn,
-                                "confidence": 0.95,
+                    if mrz_info.get("surname"):
+                        cur_val = fields["surname"]["value"] if fields.get("surname") else ""
+                        if not fields["surname"] or is_ocr_label_noise(cur_val) or len(cur_val) <= 2:
+                            fields["surname"] = {
+                                "value": mrz_info["surname"],
+                                "confidence": 0.99,
                                 "ocr_engine": engine_name,
                                 "bounding_box": None,
                                 "validation": "VALID",
                                 "source": "MRZ_VERIFIED"
                             }
+                    if mrz_info.get("given_names"):
+                        cur_val = fields["given_names"]["value"] if fields.get("given_names") else ""
+                        if not fields["given_names"] or is_ocr_label_noise(cur_val) or len(cur_val) <= 2:
+                            fields["given_names"] = {
+                                "value": mrz_info["given_names"],
+                                "confidence": 0.99,
+                                "ocr_engine": engine_name,
+                                "bounding_box": None,
+                                "validation": "VALID",
+                                "source": "MRZ_VERIFIED"
+                            }
+                    if mrz_info.get("full_name"):
+                        cur_val = fields["full_name"]["value"] if fields.get("full_name") else ""
+                        if not fields["full_name"] or is_ocr_label_noise(cur_val) or len(cur_val) <= 4:
+                            fn = mrz_info.get("full_name") or f"{mrz_info.get('given_names', '')} {mrz_info.get('surname', '')}".strip()
+                            if fn:
+                                fields["full_name"] = {
+                                    "value": fn,
+                                    "confidence": 0.99,
+                                    "ocr_engine": engine_name,
+                                    "bounding_box": None,
+                                    "validation": "VALID",
+                                    "source": "MRZ_VERIFIED"
+                                }
                     if not fields["nationality"] and mrz_info.get("nationality"):
                         fields["nationality"] = {
                             "value": "INDIAN" if mrz_info["nationality"] == "IND" else mrz_info["nationality"],
-                            "confidence": 0.95,
+                            "confidence": 0.99,
+                            "ocr_engine": engine_name,
+                            "bounding_box": None,
+                            "validation": "VALID",
+                            "source": "MRZ_VERIFIED"
+                        }
+                    if not fields["date_of_birth"] and mrz_info.get("date_of_birth"):
+                        fields["date_of_birth"] = {
+                            "value": mrz_info["date_of_birth"],
+                            "confidence": 0.99,
+                            "ocr_engine": engine_name,
+                            "bounding_box": None,
+                            "validation": "VALID",
+                            "source": "MRZ_VERIFIED"
+                        }
+                    if not fields["date_of_expiry"] and mrz_info.get("date_of_expiry"):
+                        fields["date_of_expiry"] = {
+                            "value": mrz_info["date_of_expiry"],
+                            "confidence": 0.99,
                             "ocr_engine": engine_name,
                             "bounding_box": None,
                             "validation": "VALID",
@@ -751,7 +849,7 @@ class OCREngine:
                     if not fields["sex"] and mrz_info.get("sex") and mrz_info["sex"] != "UNSPECIFIED":
                         fields["sex"] = {
                             "value": mrz_info["sex"],
-                            "confidence": 0.95,
+                            "confidence": 0.99,
                             "ocr_engine": engine_name,
                             "bounding_box": None,
                             "validation": "VALID",
@@ -763,6 +861,8 @@ class OCREngine:
         # Strict Label-Noise Suppression Gate (Phase 3):
         # Guarantee that no field value is a label or noise
         for fk in list(fields.keys()):
+            if fk == "document_type":
+                continue
             entry = fields[fk]
             if entry and isinstance(entry, dict) and entry.get("value"):
                 v_str = str(entry["value"]).strip()

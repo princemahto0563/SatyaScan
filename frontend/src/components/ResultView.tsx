@@ -1234,7 +1234,12 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                 Visual Zone (VIZ) vs Machine Readable Zone (MRZ) Cross-Check
               </span>
               <span className="text-[11px] text-slate-500 font-mono">
-                {model.crossCheckRows.length} Fields Verified
+                {(() => {
+                  const verifiedCount = model.crossCheckRows.filter(
+                    (r) => r.status === "MATCH" || r.status === "VIZ_ONLY" || r.status === "MRZ_ONLY"
+                  ).length;
+                  return `${verifiedCount} Fields Verified · ${model.crossCheckRows.length} Checked`;
+                })()}
               </span>
             </div>
 
@@ -1262,7 +1267,9 @@ export function ResultView({ caseData, authToken: propAuthToken, onBackToDashboa
                         {row.mrzValue}
                       </td>
                       <td className="px-3 py-3 font-mono text-slate-500">
-                        {(row.confidence * 100).toFixed(0)}%
+                        {row.status === "NOT_PRESENT" || row.status === "NOT_APPLICABLE" || row.status === "UNVERIFIED" || row.confidence === 0
+                          ? "—"
+                          : `${(row.confidence * 100).toFixed(0)}%`}
                       </td>
                       <td className="px-4 py-3">
                         {row.status === "MATCH" ? (
