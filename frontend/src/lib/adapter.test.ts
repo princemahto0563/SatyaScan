@@ -550,5 +550,28 @@ console.log("Starting Frontend Adapter Unit Tests (Phase K)...");
   console.log("✓ Test 17: True Mismatches remain MISMATCH PASS");
 }
 
-console.log("\nALL 17 FRONTEND ADAPTER UNIT TESTS PASSED SUCCESSFULLY!");
+// Test 18: Regression test for VIZ/MRZ document number match and mismatch
+{
+  const matchScreening = createBaseScreening("SAT-018-MATCH");
+  matchScreening.extracted_fields = [
+    { field_name: "document_number", visual_value: "Z1234567", mrz_value: "Z1234567", confidence: 0.98 },
+  ];
+  const modelMatch = mapScreeningResponseToReportViewModel(matchScreening);
+  const rowMatch = modelMatch.crossCheckRows.find(r => r.fieldName === "document_number");
+  assert.ok(rowMatch);
+  assert.equal(rowMatch.status, "MATCH");
+
+  const mismatchScreening = createBaseScreening("SAT-018-MISMATCH");
+  mismatchScreening.extracted_fields = [
+    { field_name: "document_number", visual_value: "21234567", mrz_value: "Z1234567", confidence: 0.98 },
+  ];
+  const modelMismatch = mapScreeningResponseToReportViewModel(mismatchScreening);
+  const rowMismatch = modelMismatch.crossCheckRows.find(r => r.fieldName === "document_number");
+  assert.ok(rowMismatch);
+  assert.equal(rowMismatch.status, "MISMATCH");
+
+  console.log("✓ Test 18: Regression VIZ Z1234567 + MRZ Z1234567 => MATCH and 21234567 + Z1234567 => MISMATCH PASS");
+}
+
+console.log("\nALL 18 FRONTEND ADAPTER UNIT TESTS PASSED SUCCESSFULLY!");
 

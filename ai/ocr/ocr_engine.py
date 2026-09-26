@@ -281,7 +281,8 @@ class OCREngine:
                     raw_items.append({
                         "text": joined_text,
                         "confidence": round(avg_conf, 4),
-                        "box": line_poly
+                        "box": line_poly,
+                        "words": [{"text": t["text"], "box": t["box"], "conf": t["conf"]} for t in tokens]
                     })
 
                 # Append MRZ candidate lines with authentic spatial bounding boxes
@@ -304,7 +305,7 @@ class OCREngine:
         fallback_ocr_ms = 0.0
 
         # Extract structured fields with provenance and MRZ backfill
-        structured_fields, field_mrz_candidates = self._extract_fields(raw_items, actual_engine, mrz_candidate_lines)
+        structured_fields, field_mrz_candidates = self._extract_fields(raw_items, actual_engine, mrz_candidate_lines, cv_img=cv_img)
         for m_cand in field_mrz_candidates:
             if m_cand not in mrz_candidate_lines:
                 mrz_candidate_lines.append(m_cand)
@@ -332,7 +333,7 @@ class OCREngine:
                                 "box": [[int(iw * 0.20), int(ih * 0.20)], [iw, int(ih * 0.20)], [iw, int(ih * 0.30)], [int(iw * 0.20), int(ih * 0.30)]]
                             })
                     # Re-extract fields with recovered items
-                    recovered_fields, recovered_mrz = self._extract_fields(raw_items, actual_engine, mrz_candidate_lines)
+                    recovered_fields, recovered_mrz = self._extract_fields(raw_items, actual_engine, mrz_candidate_lines, cv_img=cv_img)
                     for k, v in recovered_fields.items():
                         if not structured_fields.get(k) and v:
                             structured_fields[k] = v
@@ -381,7 +382,7 @@ class OCREngine:
             "total_ocr_ms": total_ocr_ms
         }
 
-    def _extract_fields(self, items: List[Dict[str, Any]], engine_name: Optional[str], mrz_candidate_lines: Optional[List[str]] = None) -> tuple[Dict[str, Any], List[str]]:
+    def _extract_fields(self, items: List[Dict[str, Any]], engine_name: Optional[str], mrz_candidate_lines: Optional[List[str]] = None, cv_img: Optional[np.ndarray] = None) -> tuple[Dict[str, Any], List[str]]:
         """
         Parses Visual Inspection Zone (VIZ) identity fields from detected OCR tokens.
         Supports multi-line label-value pairing across Indian & ICAO passport layouts.
@@ -390,6 +391,7 @@ class OCREngine:
         fields: Dict[str, Any] = {
             "document_type": {"value": "PASSPORT", "confidence": 0.95, "ocr_engine": engine_name, "bounding_box": None, "validation": "VALID", "source": "OCR_LAYOUT"},
             "passport_number": None,
+            "document_number": None,
             "surname": None,
             "given_names": None,
             "full_name": None,
@@ -456,7 +458,49 @@ class OCREngine:
                 return ""
             return res
 
-        doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8})\b')
+        def _get_matching_word_box(item: Dict[str, Any], val_str: str) -> Any:
+            """Finds the specific word token bounding box matching val_str, falling back to line box."""
+            words = item.get("words", [])
+            for w in words:
+                w_txt = w.get("text", "").upper()
+                if val_str in w_txt or w_txt in val_str:
+                    return w.get("box")
+            return item.get("box")
+
+        def _disambiguate_doc_number(val: str, b_box: Any) -> str:
+            """
+            Optical single-glyph disambiguation for standard 8-char ICAO passport numbers.
+            When whole-word dictionary/DAWG priors misread leading alpha characters (e.g. 'Z' -> '2')
+            due to subsequent numeric digits, this performs targeted single-character optical OCR
+            on the exact first character glyph without dictionary priors.
+            """
+            if cv_img is None or not b_box or len(val) != 8:
+                return val
+            if val[0].isdigit() and val[1:].isdigit():
+                try:
+                    xs = [p[0] for p in b_box]
+                    ys = [p[1] for p in b_box]
+                    min_x, max_x = max(0, min(xs)), min(cv_img.shape[1], max(xs))
+                    min_y, max_y = max(0, min(ys)), min(cv_img.shape[0], max(ys))
+                    bw = max_x - min_x
+                    bh = max_y - min_y
+                    if bw >= 20 and bh >= 10:
+                        pad_y = max(4, int(bh * 0.30))
+                        char_w = max(12, int((bw / 8.0) * 1.15))
+                        y1 = max(0, min_y - pad_y)
+                        y2 = min(cv_img.shape[0], max_y + pad_y)
+                        x1 = max(0, min_x - 1)
+                        x2 = min(cv_img.shape[1], min_x + char_w)
+                        char_crop = cv_img[y1:y2, x1:x2]
+                        if char_crop.size > 0:
+                            char_res = pytesseract.image_to_string(char_crop, config="--psm 10").strip().upper()
+                            clean_res = ''.join(c for c in char_res if c.isalnum())
+                            if len(clean_res) >= 1 and clean_res[0].isalpha():
+                                return clean_res[0] + val[1:]
+                except Exception:
+                    pass
+            return val
+
         doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8}|[A-Z0-9][0-9]{7}|[0-9]{8})\b')
         date_pattern = re.compile(r'\b(\d{1,2}[\/\-\s][A-Za-z]{3,9}[\/\-\s]\d{4}|\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})\b')
 
@@ -476,28 +520,34 @@ class OCREngine:
                     val = match.group(1)
                     if not any(sw in val for sw in ["REPUBLIC", "PASSPORT", "INDIA"]):
                         if any(k in text for k in ["IND", "PASSPORT", "NO", "P "]) or len(text.split()) <= 4:
+                            target_box = _get_matching_word_box(item, val)
+                            val = _disambiguate_doc_number(val, target_box)
                             fields["passport_number"] = {
                                 "value": val,
                                 "confidence": conf,
                                 "ocr_engine": engine_name,
-                                "bounding_box": box,
+                                "bounding_box": target_box,
                                 "validation": "VALID",
                                 "source": "VIZ"
                             }
+                            fields["document_number"] = fields["passport_number"]
                 elif any(k in text for k in ["PASSPORT NO", "PASSPORT NUMBER", "DOCUMENT NO", "PASSEPORT", "PASSPORT", "IND"]):
                     for la_item in lookahead:
                         la_match = doc_num_pattern.search(la_item["text"].upper())
                         if la_match:
                             val = la_match.group(1)
                             if not any(sw in val for sw in ["REPUBLIC", "PASSPORT", "INDIA"]):
+                                target_box = _get_matching_word_box(la_item, val)
+                                val = _disambiguate_doc_number(val, target_box)
                                 fields["passport_number"] = {
                                     "value": val,
                                     "confidence": la_item["confidence"],
                                     "ocr_engine": engine_name,
-                                    "bounding_box": la_item["box"],
+                                    "bounding_box": target_box,
                                     "validation": "VALID",
                                     "source": "VIZ"
                                 }
+                                fields["document_number"] = fields["passport_number"]
                                 break
 
             # 2. Surname
@@ -784,6 +834,7 @@ class OCREngine:
                             "validation": "VALID",
                             "source": "MRZ_VERIFIED"
                         }
+                        fields["document_number"] = fields["passport_number"]
                     if mrz_info.get("surname"):
                         cur_val = fields["surname"]["value"] if fields.get("surname") else ""
                         if not fields["surname"] or is_ocr_label_noise(cur_val) or len(cur_val) <= 2:

@@ -2,7 +2,7 @@ import requests
 import time
 import sys
 
-TARGET_COMMIT = "274eeaa"
+TARGET_COMMIT = "0307735"
 
 print(f"Waiting for Render and Vercel to deploy commit {TARGET_COMMIT}...")
 
@@ -25,14 +25,12 @@ for attempt in range(120):
     vercel_ready = False
     try:
         vr = requests.get("https://satya-scan-phi.vercel.app", headers={"Cache-Control": "no-cache"}, timeout=10)
-        # Check if new chunk contains satyascan_auth_token
         html = vr.text
-        # extract scripts
         import re
-        script_srcs = re.findall(r'src="(/_next/static/immutable/chunks/[^"]+)"', html)
+        script_srcs = re.findall(r'src="(/_next/static/[^"]+\.js)"', html)
         for s in script_srcs:
             cr = requests.get(f"https://satya-scan-phi.vercel.app{s}", timeout=10)
-            if "satyascan_auth_token" in cr.text:
+            if "Fields Verified ·" in cr.text or "Checked" in cr.text:
                 vercel_ready = True
                 print(f"[{attempt+1}] Vercel has new chunk: {s}")
                 break

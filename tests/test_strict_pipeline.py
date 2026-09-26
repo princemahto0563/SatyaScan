@@ -604,3 +604,28 @@ def test_42_guaranteed_terminal_state_on_preset(client, delhi_officer_token):
     assert body["document_type"] == "PASSPORT"
     assert body["checkpoint_id"] == "CP-DEL-AIR"
     assert body["ocr_engine"] in ["PaddleOCR", "Tesseract"]
+
+
+def test_43_viz_mrz_doc_number_regression():
+    """
+    Regression test:
+    VIZ Z1234567 + MRZ Z1234567 => MATCH (0 discrepancy findings)
+    VIZ 21234567 + MRZ Z1234567 => MISMATCH (CRITICAL discrepancy finding)
+    """
+    # 1. Matching case
+    mrz_match = {"parsed": True, "document_number": "Z1234567"}
+    viz_match = {"document_number": "Z1234567"}
+    findings_match = MRZParser.cross_validate_viz(mrz_match, viz_match)
+    doc_findings_match = [f for f in findings_match if f.get("field") == "document_number"]
+    assert len(doc_findings_match) == 0, f"Expected MATCH but got findings: {doc_findings_match}"
+
+    # 2. Mismatching case (tampered or misread)
+    mrz_mismatch = {"parsed": True, "document_number": "Z1234567"}
+    viz_mismatch = {"document_number": "21234567"}
+    findings_mismatch = MRZParser.cross_validate_viz(mrz_mismatch, viz_mismatch)
+    doc_findings_mismatch = [f for f in findings_mismatch if f.get("field") == "document_number"]
+    assert len(doc_findings_mismatch) == 1, "Expected MISMATCH finding for 21234567 vs Z1234567"
+    assert doc_findings_mismatch[0]["severity"] == "CRITICAL"
+    assert doc_findings_mismatch[0]["expected"] == "Z1234567"
+    assert doc_findings_mismatch[0]["observed"] == "21234567"
+
