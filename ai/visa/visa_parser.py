@@ -35,15 +35,39 @@ class VisaParser:
         'REPUBLIC', 'OF', 'COUNTRY', 'TYPE', 'CATEGORY', 'NATIONALITY', 'NATIONALITE',
         'SEX', 'SEXE', 'GENDER', 'DATE', 'BIRTH', 'NAISSANCE', 'EXPIRY', 'VALID', 'UNTIL',
         'FROM', 'ENTRIES', 'DURATION', 'STAY', 'PLACE', 'ISSUE', 'MAT', 'MATRICULE', 'SIGNATURE',
-        'TITULAIRE', 'OFFICER', 'REMARKS', 'REMARQUES', 'CONFERENCE', 'ATTENDANCE', 'PERMITTED'
+        'TITULAIRE', 'OFFICER', 'REMARKS', 'REMARQUES', 'CONFERENCE', 'ATTENDANCE', 'PERMITTED',
+        'GIVENNAMES', 'FULLNAME', 'MATNOM', 'SURNAMENOM', 'PASSPORTNO', 'DOCUMENTNO',
+        'EXPIRATION', 'VALIDITY', 'DELIVRANCE', 'DELIVERY', 'AUTORITE', 'AUTHORITY',
+        'BEARER', 'PAYS', 'CODE', 'ISSUING', 'POST', 'DELHI', 'INDIA', 'ISLANDS'
     }
 
     @classmethod
+    def is_label_noise(cls, val_str: str) -> bool:
+        """Determines if a field candidate consists solely of OCR label stopwords."""
+        if not val_str or len(val_str.strip()) < 2:
+            return True
+        s = val_str.strip()
+        # If it has 3+ digits (e.g. document number, date), it's not a pure label noise string
+        if re.search(r'\d{3,}', s):
+            return False
+        tokens = re.findall(r'[A-Za-z]+', s.upper())
+        if not tokens:
+            return True
+        return all(t in cls.LABEL_STOPWORDS for t in tokens)
+
+    @classmethod
     def _clean_name_tokens(cls, raw_text: str) -> str:
-        """Strips OCR noise and label stopwords from name candidates."""
+        """Strips OCR noise, label prefixes, and label stopwords from name candidates."""
         if not raw_text:
             return ""
-        clean = re.sub(r'[^A-Za-z\s]', ' ', raw_text)
+        # Strip leading label prefixes like "SURNAME/NOM:", "MAT /NOM:", "GIVEN NAMES:"
+        stripped = re.sub(
+            r'^(?:SURNAME|NOM|GIVEN|NAMES|PRENOM|PRENOMS|MAT|MATRICULE|NAME|FULL)[\s\:\./\-]+',
+            '',
+            raw_text.strip(),
+            flags=re.IGNORECASE
+        )
+        clean = re.sub(r'[^A-Za-z\s]', ' ', stripped)
         tokens = clean.split()
         valid = []
         for t in tokens:
@@ -54,7 +78,10 @@ class VisaParser:
             if len(up) == 2 and not any(v in up for v in ("A", "E", "I", "O", "U", "Y")):
                 continue
             valid.append(up)
-        return ' '.join(valid).strip()
+        result = ' '.join(valid).strip()
+        if cls.is_label_noise(result):
+            return ""
+        return result
 
     @classmethod
     def parse_visa_fields(cls, raw_lines: List[Dict[str, Any]], ocr_engine_name: str = "Tesseract") -> Dict[str, Any]:
@@ -79,6 +106,32 @@ class VisaParser:
             "stay_duration": {"value": None, "status": "NOT_FOUND", "confidence": None, "ocr_engine": ocr_engine_name, "bounding_box": None, "validation": "PENDING"},
         }
 
+        # Check for ICAO Doc 9303 Part 7 MRV lines (MRVA: 44 chars or MRVB: 36 chars)
+        for item in raw_lines:
+            t_clean = item.get("text", "").replace(" ", "").upper()
+            if t_clean.startswith("V<") and len(t_clean) >= 20:
+                # Extract holder name from MRVA / MRVB Line 1 (V<CCC<SURNAME<<GIVEN<NAMES...)
+                parts = t_clean[5:].split("<<")
+                if len(parts) >= 2 and not fields["surname"]["value"]:
+                    s_cand = parts[0].replace("<", " ").strip()
+                    g_cand = parts[1].replace("<", " ").strip()
+                    if s_cand and not cls.is_label_noise(s_cand):
+                        fields["surname"] = {"value": s_cand, "status": "FOUND", "confidence": 0.95, "ocr_engine": ocr_engine_name, "bounding_box": item.get("box"), "validation": "VALID"}
+                    if g_cand and not cls.is_label_noise(g_cand):
+                        fields["given_names"] = {"value": g_cand, "status": "FOUND", "confidence": 0.95, "ocr_engine": ocr_engine_name, "bounding_box": item.get("box"), "validation": "VALID"}
+            # Check MRV Line 2: starts with 9-char document number followed by check digit, 3-char nationality, 6-char DOB
+            mrv_l2 = re.match(r'^([A-Z0-9]{7,10})\d([A-Z]{3})(\d{6})\d([MF<])(\d{6})', t_clean)
+            if mrv_l2:
+                v_num_mrv, nat_mrv, dob_mrv, sex_mrv, exp_mrv = mrv_l2.groups()
+                if not fields["visa_number"]["value"]:
+                    clean_vnum = v_num_mrv.replace("<", "").strip()
+                    if clean_vnum and len(clean_vnum) >= 6:
+                        fields["visa_number"] = {"value": clean_vnum, "status": "FOUND", "confidence": 0.96, "ocr_engine": ocr_engine_name, "bounding_box": item.get("box"), "validation": "VALID"}
+                if not fields["nationality"]["value"] and nat_mrv:
+                    fields["nationality"] = {"value": "INDIAN" if nat_mrv == "IND" else nat_mrv, "status": "FOUND", "confidence": 0.95, "ocr_engine": ocr_engine_name, "bounding_box": item.get("box"), "validation": "VALID"}
+                if not fields["sex"]["value"] and sex_mrv in ("M", "F"):
+                    fields["sex"] = {"value": "MALE" if sex_mrv == "M" else "FEMALE", "status": "FOUND", "confidence": 0.95, "ocr_engine": ocr_engine_name, "bounding_box": item.get("box"), "validation": "VALID"}
+
         for i, item in enumerate(raw_lines):
             raw = item.get("text", "").strip()
             text = raw.upper()
@@ -89,27 +142,27 @@ class VisaParser:
 
             # Check Surname
             if not fields["surname"]["value"] and any(k in text for k in ["SURNAME", "NOM"]):
-                cleaned = re.sub(r'.*(SURNAME|NOM)[\s\:\./]*', '', text).strip()
+                cleaned = re.sub(r'.*(?:SURNAME|NOM)[\s\:\./\-]*', '', text).strip()
                 cand = cls._clean_name_tokens(cleaned)
-                if cand:
+                if cand and not cls.is_label_noise(cand):
                     fields["surname"] = {"value": cand, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                 else:
                     for la in lookahead:
                         la_cand = cls._clean_name_tokens(la.get("text", ""))
-                        if la_cand and len(la_cand) >= 2 and not any(k in la.get("text", "").upper() for k in ["GIVEN", "PRENOM", "SEX", "PASSPORT", "VISA"]):
+                        if la_cand and len(la_cand) >= 2 and not cls.is_label_noise(la_cand) and not any(k in la.get("text", "").upper() for k in ["GIVEN", "PRENOM", "SEX", "PASSPORT", "VISA"]):
                             fields["surname"] = {"value": la_cand, "status": "FOUND", "confidence": la.get("confidence") or conf, "ocr_engine": ocr_engine_name, "bounding_box": la.get("box"), "validation": "VALID"}
                             break
 
             # Check Given Names
             if not fields["given_names"]["value"] and any(k in text for k in ["GIVEN", "PRENOM"]):
-                cleaned = re.sub(r'.*(GIVEN[\sA-Z]*|PRENOM[S]?)[\s\:\./]*', '', text).strip()
+                cleaned = re.sub(r'.*(?:GIVEN[\sA-Z]*|PRENOM[S]?)[\s\:\./\-]*', '', text).strip()
                 cand = cls._clean_name_tokens(cleaned)
-                if cand:
+                if cand and not cls.is_label_noise(cand):
                     fields["given_names"] = {"value": cand, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                 else:
                     for la in lookahead:
                         la_cand = cls._clean_name_tokens(la.get("text", ""))
-                        if la_cand and len(la_cand) >= 2 and not any(k in la.get("text", "").upper() for k in ["SURNAME", "NOM", "SEX", "PASSPORT", "VISA"]):
+                        if la_cand and len(la_cand) >= 2 and not cls.is_label_noise(la_cand) and not any(k in la.get("text", "").upper() for k in ["SURNAME", "NOM", "SEX", "PASSPORT", "VISA"]):
                             fields["given_names"] = {"value": la_cand, "status": "FOUND", "confidence": la.get("confidence") or conf, "ocr_engine": ocr_engine_name, "bounding_box": la.get("box"), "validation": "VALID"}
                             break
 
@@ -124,9 +177,12 @@ class VisaParser:
                     fields["date_of_birth"] = {"value": d_str.strip(), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                 if not fields["nationality"]["value"] and n_str:
                     clean_n = "INDIAN" if n_str in ["INDIAN", "IND"] else n_str.strip()
-                    fields["nationality"] = {"value": clean_n, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                    if not cls.is_label_noise(clean_n):
+                        fields["nationality"] = {"value": clean_n, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                 if not fields["passport_number"]["value"] and p_str:
-                    fields["passport_number"] = {"value": p_str.strip(), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                    clean_p = p_str.strip()
+                    if any(c.isdigit() for c in clean_p) and not cls.is_label_noise(clean_p):
+                        fields["passport_number"] = {"value": clean_p, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
 
             # Check combined validity line: [VISA TYPE] [VALID FROM] [VALID UNTIL]
             val_match = re.search(r'\b(TOURIST|STUDENT|BUSINESS|TRANSIT|CONFERENCE|VISITOR|DIPLOMATIC)\b.*?(\d{1,2}\s*[A-Za-z0-9]{3,9}\s*\d{4})\s+(\d{1,2}\s*[A-Za-z0-9]{3,9}\s*\d{4})', text)
@@ -150,12 +206,14 @@ class VisaParser:
                 vnum_match = re.search(r'\b(?:VISA\s*(?:NO|NUMBER|NUM|#)?[\s\:\.]*|VIGNETTE\s*(?:NO|#)?[\s\:\.]*)([A-Z0-9]*\d[A-Z0-9]{5,11})\b', text)
                 if vnum_match:
                     val = vnum_match.group(1)
-                    if val not in ["VIGNETTE", "PASSPORT", "CATEGORY", "OFFICIAL"]:
+                    if val not in ["VIGNETTE", "PASSPORT", "CATEGORY", "OFFICIAL"] and not cls.is_label_noise(val):
                         fields["visa_number"] = {"value": val, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                 else:
                     vnum_gen = re.search(r'\b([A-Z]{1,3}\s*\d{7,8}|[A-Z]\d\s*\d{7})\b', text)
-                    if vnum_gen and "REPUBLIC" not in text and "IND" not in text and "PASSPORT" not in text:
-                        fields["visa_number"] = {"value": vnum_gen.group(1), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                    if vnum_gen:
+                        cand_v = vnum_gen.group(1).strip()
+                        if cand_v not in ["REPUBLIC", "PASSPORT", "CATEGORY", "OFFICIAL", "ISLANDS"] and not cls.is_label_noise(cand_v):
+                            fields["visa_number"] = {"value": cand_v, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
 
             # Visa Type (standalone or combined)
             if not fields["visa_type"]["value"]:
@@ -180,11 +238,11 @@ class VisaParser:
                     fields["stay_duration"] = {"value": f"{stay_match.group(1)} {stay_match.group(2)}", "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
 
             # Standalone fallback date extractions
-            if not fields["valid_from"]["value"] and ("FROM" in text or "VALID FROM" in text):
+            if not fields["valid_from"]["value"] and any(k in text for k in ["VALID FROM", "VALIDE DU", "FROM", "DU:"]):
                 d = cls._extract_date(raw)
                 if d:
                     fields["valid_from"] = {"value": d, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
-            if not fields["valid_until"]["value"] and any(k in text for k in ["UNTIL", "VALID UNTIL", "EXPIRY", "EXPIRATION"]):
+            if not fields["valid_until"]["value"] and any(k in text for k in ["VALID UNTIL", "VALIDE JUSQU", "UNTIL", "EXPIRY", "EXPIRATION"]):
                 d = cls._extract_date(raw)
                 if d:
                     fields["valid_until"] = {"value": d, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
@@ -192,7 +250,12 @@ class VisaParser:
                 d = cls._extract_date(raw)
                 if d:
                     fields["date_of_birth"] = {"value": d, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
-            if not fields["nationality"]["value"] and any(k in text for k in ["NATIONALITY", "CITIZENSHIP"]):
+            if not fields["sex"]["value"] and any(k in text for k in ["SEX", "SEXE", "GENDER"]):
+                m_sex = re.search(r'\b(MALE|FEMALE|M|F)\b', text)
+                if m_sex:
+                    val_s = m_sex.group(1)
+                    fields["sex"] = {"value": "MALE" if val_s in ("M", "MALE") else "FEMALE", "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+            if not fields["nationality"]["value"] and any(k in text for k in ["NATIONALITY", "CITIZENSHIP", "NATIONALITE"]):
                 for nat in ["INDIAN", "IND", "USA", "GBR", "CAN", "AUS", "FRA", "DEU", "JPN", "SGP", "ARE"]:
                     if nat in text:
                         fields["nationality"] = {"value": "INDIAN" if nat in ["INDIAN", "IND"] else nat, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
@@ -200,11 +263,13 @@ class VisaParser:
             if not fields["passport_number"]["value"] and any(k in text for k in ["PASSPORT", "DOC NO", "PPT NO", "PASSEPORT"]):
                 cleaned_ppt = re.sub(r'.*(?:PASSPORT|DOC|PPT|PASSEPORT)[\s\:\./#]*(?:NO|NUMBER)?[\s\:\./]*', '', text).strip()
                 p_match = re.search(r'\b([A-Z0-9]{7,10})\b', cleaned_ppt)
-                if p_match and p_match.group(1) not in ["PASSPORT", "PASSEPORT", "REPUBLIC"]:
-                    fields["passport_number"] = {"value": p_match.group(1), "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
+                if p_match:
+                    cand_p = p_match.group(1)
+                    if any(c.isdigit() for c in cand_p) and cand_p not in ["PASSPORT", "PASSEPORT", "REPUBLIC"] and not cls.is_label_noise(cand_p):
+                        fields["passport_number"] = {"value": cand_p, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                 else:
                     for token in re.findall(r'\b([A-Z0-9]{7,10})\b', text):
-                        if token not in ["PASSPORT", "PASSEPORT", "REPUBLIC", "CATEGORY", "OFFICIAL"]:
+                        if any(c.isdigit() for c in token) and any(c.isalpha() for c in token) and token not in ["PASSPORT", "PASSEPORT", "REPUBLIC", "CATEGORY", "OFFICIAL"] and not cls.is_label_noise(token):
                             fields["passport_number"] = {"value": token, "status": "FOUND", "confidence": conf, "ocr_engine": ocr_engine_name, "bounding_box": box, "validation": "VALID"}
                             break
 
@@ -223,10 +288,11 @@ class VisaParser:
             val = fields[fk].get("value")
             if val is not None:
                 val_str = str(val).strip()
-                clean_alpha = re.sub(r'[^A-Za-z]', '', val_str).upper()
-                if clean_alpha in cls.LABEL_STOPWORDS or len(val_str) < 2 or val_str.startswith(('/NOM', 'ME INOM', 'MAT /')):
+                if cls.is_label_noise(val_str):
                     fields[fk]["value"] = None
                     fields[fk]["status"] = "NOT_FOUND"
+
+        return fields
 
         return fields
 

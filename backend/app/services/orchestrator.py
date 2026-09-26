@@ -283,12 +283,13 @@ class ScreeningOrchestrator:
         )
 
         # 2. Page Classification & MRZ Extraction & 7-3-1 Check Digits
-        page_type = classification_result.get("page_type", "PASSPORT_IDENTITY_PAGE") if classification_result else "PASSPORT_IDENTITY_PAGE"
-        is_id_page = classification_result.get("is_identity_page", True) if classification_result else True
-        if classification_result is None or "is_identity_page" not in classification_result:
-            p_type, is_id, _, _ = self.document_classifier._check_passport_patterns(ocr_res.get("raw_lines", []))
-            page_type = p_type
-            is_id_page = is_id
+        if classification_result and "is_identity_page" in classification_result:
+            page_type = classification_result.get("page_type", "PASSPORT_IDENTITY_PAGE")
+            is_id_page = bool(classification_result.get("is_identity_page", True))
+        else:
+            class_res = self.document_classifier.classify_image(doc_image_path, ocr_result=ocr_res)
+            page_type = class_res.get("page_type", "PASSPORT_IDENTITY_PAGE")
+            is_id_page = bool(class_res.get("is_identity_page", True))
 
         mrz_candidates = ocr_res.get("mrz_candidate_lines", [])
         mrz_res: Dict[str, Any] = {"parsed": False}
@@ -494,8 +495,10 @@ class ScreeningOrchestrator:
 
         # 9. Determine Terminal Status & Persist
         latency_ms = round((time.time() - start_time) * 1000.0, 1)
-        raw_doc_id = doc_num_to_check or "UNKNOWN"
-        masked_id = mask_document_number(raw_doc_id)
+        if not is_id_page or page_type == "PASSPORT_COVER" or not doc_num_to_check:
+            masked_id = "Not available"
+        else:
+            masked_id = mask_document_number(doc_num_to_check)
 
         if not is_id_page or page_type == "PASSPORT_COVER":
             terminal_status = "MANUAL_REVIEW_REQUIRED"
@@ -818,9 +821,9 @@ class ScreeningOrchestrator:
             "risk_score": risk_res["risk_score"],
             "risk_band": risk_res["risk_band"],
             "recommendation": screening_rec.recommendation,
-            "ocr_status": ocr_res.get("ocr_status", "SUCCESS" if field_records else "FAILED"),
+            "ocr_status": "PARTIAL" if (not is_id_page or page_type == "PASSPORT_COVER") and field_records else ocr_res.get("ocr_status", "SUCCESS" if field_records else "FAILED"),
             "ocr_engine": actual_engine,
-            "ocr_reason": ocr_res.get("ocr_reason", ""),
+            "ocr_reason": "Passport cover detected. Identity biodata page required." if (not is_id_page or page_type == "PASSPORT_COVER") else ocr_res.get("ocr_reason", ""),
             "execution_latency_ms": latency_ms,
             "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
             "live_image_url": f"/api/v1/screenings/media/{screening_id}/live" if live_image_path else None,
@@ -967,8 +970,10 @@ class ScreeningOrchestrator:
 
         # 7. Persist to Database
         latency_ms = round((time.time() - start_time) * 1000.0, 1)
-        raw_doc_id = doc_num_to_check or "VISA-UNKNOWN"
-        masked_id = mask_document_number(raw_doc_id)
+        if not doc_num_to_check:
+            masked_id = "Not available"
+        else:
+            masked_id = mask_document_number(doc_num_to_check)
 
         if quality_res.get("verdict") in ["REJECTED", "NEEDS_BETTER_IMAGE"]:
             terminal_status = "UNABLE_TO_VERIFY"
@@ -1148,6 +1153,24 @@ class ScreeningOrchestrator:
             .all()
         )
 
+        core_visa_fields = [
+            visa_fields.get("visa_number", {}).get("value"),
+            visa_fields.get("holder_name", {}).get("value") or visa_fields.get("surname", {}).get("value"),
+            visa_fields.get("valid_from", {}).get("value") or visa_fields.get("valid_until", {}).get("value")
+        ]
+        found_core_count = sum(1 for v in core_visa_fields if v)
+        total_found = sum(1 for f in visa_fields.values() if f.get("value") and f.get("status") in ("FOUND", "VALID"))
+
+        if found_core_count >= 2:
+            visa_ocr_status = "SUCCESS"
+            visa_ocr_reason = "Core visa fields successfully extracted from Visual Inspection Zone."
+        elif total_found >= 1:
+            visa_ocr_status = "PARTIAL"
+            visa_ocr_reason = f"Partial visa field extraction: {total_found} fields located."
+        else:
+            visa_ocr_status = "FAILED"
+            visa_ocr_reason = "Unable to extract required visa fields from document image."
+
         return {
             "id": screening_id,
             "screening_id": screening_id,
@@ -1164,9 +1187,9 @@ class ScreeningOrchestrator:
             "risk_score": risk_res["risk_score"],
             "risk_band": risk_res["risk_band"],
             "recommendation": screening_rec.recommendation,
-            "ocr_status": ocr_res.get("ocr_status", "SUCCESS" if field_records else "FAILED"),
+            "ocr_status": visa_ocr_status,
             "ocr_engine": actual_engine,
-            "ocr_reason": ocr_res.get("ocr_reason", ""),
+            "ocr_reason": visa_ocr_reason,
             "execution_latency_ms": latency_ms,
             "doc_image_url": f"/api/v1/screenings/media/{screening_id}/doc",
             "live_image_url": f"/api/v1/screenings/media/{screening_id}/live" if live_image_path else None,

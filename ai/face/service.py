@@ -124,7 +124,7 @@ class FaceVerificationService:
                 return [(fx, fy, fw, fh)]
 
         # TD3 portrait zone fallback ONLY for wide passport document scans (Standard ICAO TD3 left quadrant)
-        # NEVER apply to live selfies
+        # NEVER apply to live selfies; verify facial structure to prevent false positives on emblems/covers
         is_doc = is_document or (iw > ih * 1.2 and iw >= 500)
         if is_doc and iw > ih and iw >= 500:
             candidates = []
@@ -133,18 +133,31 @@ class FaceVerificationService:
             pw, ph = int(iw * 0.20), int(ih * 0.367)
             crop_zone = gray[py1:py1+ph, px1:px1+pw]
             if crop_zone.size > 0 and np.std(crop_zone) > 18.0 and cv2.Laplacian(crop_zone, cv2.CV_64F).var() > 25.0:
-                fx = px1 + int(pw * 0.228)
-                fy = py1 + int(ph * 0.20)
-                fw = int(pw * 0.544)
-                fh = int(ph * 0.445)
-                candidates.append((fx, fy, fw, fh))
+                has_facial_feature = False
+                if self.eye_cascade is not None:
+                    eyes = self.eye_cascade.detectMultiScale(crop_zone, scaleFactor=1.1, minNeighbors=2)
+                    if len(eyes) >= 1:
+                        has_facial_feature = True
+                if self.face_cascade is not None and not has_facial_feature:
+                    faces_in_crop = self.face_cascade.detectMultiScale(crop_zone, scaleFactor=1.05, minNeighbors=2)
+                    if len(faces_in_crop) >= 1:
+                        has_facial_feature = True
+                if has_facial_feature:
+                    fx = px1 + int(pw * 0.228)
+                    fy = py1 + int(ph * 0.20)
+                    fw = int(pw * 0.544)
+                    fh = int(ph * 0.445)
+                    candidates.append((fx, fy, fw, fh))
 
-            # Also check ghost watermark zone on right
+            # Also check ghost watermark zone on right with facial feature verification
             gx1, gy1 = int(iw * 0.70), int(ih * 0.16)
             gw, gh = int(iw * 0.18), int(ih * 0.30)
             ghost_zone = gray[gy1:gy1+gh, gx1:gx1+gw]
             if ghost_zone.size > 0 and np.std(ghost_zone) > 18.0 and cv2.Laplacian(ghost_zone, cv2.CV_64F).var() > 25.0:
-                candidates.append((gx1, gy1, gw, gh))
+                if self.face_cascade is not None:
+                    gf = self.face_cascade.detectMultiScale(ghost_zone, scaleFactor=1.05, minNeighbors=2)
+                    if len(gf) >= 1:
+                        candidates.append((gx1, gy1, gw, gh))
 
             if candidates:
                 return candidates

@@ -416,8 +416,8 @@ class DocumentClassifier:
         if "REPUBLIC OF INDIA" in upper_text or "UNION OF INDIA" in upper_text or "INDIAN PASSPORT" in upper_text:
             indicators.append("Issuing State passport authority string found")
 
-        # Passport number pattern (e.g. Z1234567, P1234567, A12345678)
-        doc_num_match = re.search(r'\b([A-Z][0-9]{7,8})\b', upper_text)
+        # Passport number pattern (e.g. Z1234567, P1234567, A12345678, P 7123456)
+        doc_num_match = re.search(r'\b([A-Z]\s*[0-9]{7,8})\b', upper_text)
         if doc_num_match and ("PASSPORT" in upper_text or mrz_count >= 1):
             indicators.append(f"Standard passport identifier sequence found ({doc_num_match.group(1)})")
 
@@ -450,7 +450,7 @@ class DocumentClassifier:
         identity_indicators = []
         ID_KEYWORDS = [
             "GIVEN NAME", "SURNAME", "DATE OF BIRTH", "DATE DE NAISSANCE", "SEX", "SEXE",
-            "NATIONALITY", "NATIONALITE", "PLACE OF BIRTH", "PLACE OF ISSUE", "DATE OF EXPIRY"
+            "NATIONALITY", "NATIONALITE", "PLACE OF BIRTH", "PLACE OF ISSUE", "DATE OF EXPIRY", "IDENTITY PAGE"
         ]
         for kw in ID_KEYWORDS:
             if kw in upper_text:
@@ -459,15 +459,23 @@ class DocumentClassifier:
         # Page classification logic:
         # It is a valid PASSPORT_IDENTITY_PAGE if:
         # - Has MRZ line(s) OR
-        # - Has >= 2 identity field labels AND doc_num_match
+        # - Has >= 2 identity field labels OR
+        # - Explicitly marked as IDENTITY PAGE OR
+        # - Has >= 1 identity field label AND doc_num_match
         # It is a PASSPORT_COVER / non-identity page if:
-        # - Has cover_indicators OR
+        # - Has cover_indicators (without identity fields) OR
         # - Lacks MRZ AND lacks identity field labels
         is_identity_page = True
-        if cover_indicators:
+        if cover_indicators and not ("IDENTITY PAGE" in upper_text or len(identity_indicators) >= 2):
             is_identity_page = False
             indicators.extend(cover_indicators)
-        elif mrz_count == 0 and len(identity_indicators) == 0:
+        elif mrz_count >= 1:
+            is_identity_page = True
+        elif len(identity_indicators) >= 2 or "IDENTITY PAGE" in upper_text:
+            is_identity_page = True
+        elif len(identity_indicators) >= 1 and doc_num_match is not None:
+            is_identity_page = True
+        else:
             is_identity_page = False
             indicators.append("No MRZ or identity fields found (Cover / Non-identity page)")
 
@@ -486,6 +494,11 @@ class DocumentClassifier:
     def _check_visa_patterns(self, upper_text: str, lines: List[str]) -> Dict[str, Any]:
         """Identifies Visa vignette based on visa headers, category, validity, and entry info."""
         indicators = []
+
+        # Check for ICAO Doc 9303 Part 7 MRV line (starts with V<)
+        has_mrv = any(l.replace(" ", "").upper().startswith(("V<", "V0", "V«")) for l in lines)
+        if has_mrv:
+            indicators.append("ICAO Doc 9303 Machine Readable Visa (MRV) format found")
 
         if re.search(r'\b(VISA|VIZUM|VISA VIGNETTE)\b', upper_text):
             indicators.append("Visa document header keyword found")
@@ -508,8 +521,12 @@ class DocumentClassifier:
         if visa_num:
             indicators.append(f"Visa identifier found ({visa_num.group(2)})")
 
-        is_visa = len(indicators) >= 2 and any("VISA" in ind.upper() for ind in indicators)
-        confidence = 0.95 if len(indicators) >= 3 else 0.85 if is_visa else 0.0
+        is_visa = (
+            (len(indicators) >= 2 and any("VISA" in ind.upper() for ind in indicators))
+            or has_mrv
+            or ("VISA" in upper_text and len(indicators) >= 2)
+        )
+        confidence = 0.95 if (len(indicators) >= 3 or has_mrv) else 0.85 if is_visa else 0.0
 
         return {
             "detected": is_visa,

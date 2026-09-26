@@ -71,8 +71,15 @@ class DocumentQualityGate:
         # 4. Brightness evaluation (mean gray value)
         brightness_score = float(np.mean(gray))
 
-        # 5. Resolution adequacy
-        resolution_adequate = (width >= self.MIN_WIDTH and height >= self.MIN_HEIGHT)
+        # 5. Resolution adequacy (support landscape, portrait orientation, and cropped documents)
+        min_dim = min(width, height)
+        max_dim = max(width, height)
+        resolution_adequate = (
+            (width >= self.MIN_WIDTH and height >= self.MIN_HEIGHT) or
+            (max_dim >= self.MIN_WIDTH and min_dim >= 200) or
+            (min_dim >= 200 and max_dim >= 480) or
+            (width * height >= 120000)
+        )
 
         # Collect failure reasons
         reasons: List[str] = []
@@ -98,7 +105,7 @@ class DocumentQualityGate:
             is_acceptable = False
 
         if not resolution_adequate:
-            reasons.append(f"Image resolution too low ({width}x{height}, required: at least {self.MIN_WIDTH}x{self.MIN_HEIGHT}).")
+            reasons.append(f"Image resolution too low ({width}x{height}, required: at least {self.MIN_WIDTH}x{self.MIN_HEIGHT} or equivalent pixel area).")
             is_acceptable = False
 
         # Composite quality score (0.0 to 100.0)

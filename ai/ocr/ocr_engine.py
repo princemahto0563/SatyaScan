@@ -404,12 +404,33 @@ class OCREngine:
             'SURNAME', 'NOM', 'NOW', 'GIVEN', 'NAMES', 'NAWES', 'PRENOM', 'PRENOMS', 'PRENOW', 'PRENOUS', 'PRENOWS',
             'NAME', 'FULL', 'HOLDER', 'PASSPORT', 'PASSEPORT', 'REPUBLIC', 'INDIA', 'TYPE', 'COUNTRY',
             'CODE', 'PAYS', 'NATIONALITY', 'NATIONALITE', 'SEX', 'SEXE', 'GENDER', 'DATE', 'BIRTH', 'EXPIRY',
-            'ISSUE', 'PLACE', 'LIEU', 'DELIVERY', 'DELWRANCE', 'NAISSANCE', 'NASSANGE', 'NAISEANCE', 'ZE', 'EA',
-            'MAT', 'MATRICULE', 'SIGNATURE', 'TITULAIRE', 'OFFICER', 'VISA', 'VIGNETTE'
+            'ISSUE', 'PLACE', 'LIEU', 'DELIVERY', 'DELWRANCE', 'DELIVRANCE', 'NAISSANCE', 'NASSANGE', 'NAISEANCE', 'ZE', 'EA',
+            'MAT', 'MATRICULE', 'SIGNATURE', 'TITULAIRE', 'OFFICER', 'VISA', 'VIGNETTE',
+            'GIVENNAMES', 'FULLNAME', 'MATNOM', 'SURNAMENOM', 'PASSPORTNO', 'DOCUMENTNO',
+            'EXPIRATION', 'VALIDITY', 'AUTORITE', 'AUTHORITY', 'BEARER', 'DELHI'
         }
 
+        def is_ocr_label_noise(val_str: str) -> bool:
+            if not val_str or len(val_str.strip()) < 2:
+                return True
+            s = val_str.strip()
+            if re.search(r'\d{3,}', s):
+                return False
+            tokens = re.findall(r'[A-Za-z]+', s.upper())
+            if not tokens:
+                return True
+            return all(t in LABEL_STOPWORDS for t in tokens)
+
         def clean_name_tokens(raw_text: str) -> str:
-            clean = re.sub(r'[^A-Za-z\s]', ' ', raw_text)
+            if not raw_text:
+                return ""
+            stripped = re.sub(
+                r'^(?:SURNAME|NOM|GIVEN|NAMES|PRENOM|PRENOMS|MAT|MATRICULE|NAME|FULL)[\s\:\./\-]+',
+                '',
+                raw_text.strip(),
+                flags=re.IGNORECASE
+            )
+            clean = re.sub(r'[^A-Za-z\s]', ' ', stripped)
             tokens = clean.split()
             valid = []
             for t in tokens:
@@ -419,7 +440,10 @@ class OCREngine:
                 if len(up) == 2 and not any(v in up for v in ("A", "E", "I", "O", "U", "Y")):
                     continue
                 valid.append(up)
-            return ' '.join(valid).strip()
+            res = ' '.join(valid).strip()
+            if is_ocr_label_noise(res):
+                return ""
+            return res
 
         doc_num_pattern = re.compile(r'\b([A-Z][0-9]{7,8})\b')
         date_pattern = re.compile(r'\b(\d{1,2}[\/\-\s][A-Za-z]{3,9}[\/\-\s]\d{4}|\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4}|\d{4}[\/\-]\d{2}[\/\-]\d{2})\b')
@@ -742,8 +766,7 @@ class OCREngine:
             entry = fields[fk]
             if entry and isinstance(entry, dict) and entry.get("value"):
                 v_str = str(entry["value"]).strip()
-                clean_alpha = re.sub(r'[^A-Za-z]', '', v_str).upper()
-                if clean_alpha in LABEL_STOPWORDS or len(v_str) < 2 or v_str.startswith(('/NOM', 'ME INOM', 'MAT /', 'MAT/')):
+                if is_ocr_label_noise(v_str):
                     fields[fk] = None
 
         return fields, mrz_lines

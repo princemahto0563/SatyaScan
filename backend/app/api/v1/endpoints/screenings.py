@@ -529,6 +529,64 @@ def get_screening_detail(
             "message": "MRZ not detected on document image."
         }
 
+    meaningful_fields = [
+        f for f in reconstructed_fields
+        if (f.get("visual_value") or f.get("mrz_value") or f.get("field_value"))
+        and f.get("field_name") not in ("document_type", "doc_type")
+    ]
+    if not is_id_page or page_type == "PASSPORT_COVER":
+        computed_ocr_status = "PARTIAL" if len(meaningful_fields) >= 1 else "FAILED"
+    elif len(meaningful_fields) >= 2:
+        computed_ocr_status = "SUCCESS"
+    elif len(meaningful_fields) == 1:
+        computed_ocr_status = "PARTIAL"
+    else:
+        computed_ocr_status = "FAILED"
+
+    reconstructed_risk_reasons = []
+    if not is_id_page or page_type == "PASSPORT_COVER":
+        reconstructed_risk_reasons.append({
+            "category": "DOCUMENT_PAGE",
+            "severity": "CRITICAL",
+            "summary": "Identity Page Not Detected",
+            "detail": "Submitted image appears to be a passport cover or non-identity page. Biodata page containing portrait and MRZ is required.",
+            "action": "Recapture passport biodata page."
+        })
+    for vf in val_findings:
+        if getattr(vf, "severity", "") in ("HIGH", "CRITICAL"):
+            reconstructed_risk_reasons.append({
+                "category": getattr(vf, "category", "COMPLIANCE"),
+                "severity": vf.severity,
+                "summary": vf.rule_id,
+                "detail": getattr(vf, "message", ""),
+                "action": "Secondary inspection required."
+            })
+    for tf in tamper_findings:
+        if getattr(tf, "severity", "") in ("HIGH", "CRITICAL"):
+            reconstructed_risk_reasons.append({
+                "category": "TAMPER_FORENSICS",
+                "severity": tf.severity,
+                "summary": f"Tampering anomaly: {getattr(tf, 'technique', 'FORENSIC')}",
+                "detail": getattr(tf, "summary", "Discrepancy detected in spatial image analysis."),
+                "action": "Forensic laboratory analysis recommended."
+            })
+    if reconstructed_face and reconstructed_face.get("verification_result") == "INPUT_FAILURE":
+        reconstructed_risk_reasons.append({
+            "category": "BIOMETRIC",
+            "severity": "CRITICAL",
+            "summary": "Biometric Input Incomplete",
+            "detail": reconstructed_face.get("reason", "Face verification could not be completed."),
+            "action": "Recapture portrait face under proper lighting."
+        })
+    elif reconstructed_face and reconstructed_face.get("verification_result") in ("VERIFIED_MISMATCH", "MISMATCH"):
+        reconstructed_risk_reasons.append({
+            "category": "BIOMETRIC",
+            "severity": "CRITICAL",
+            "summary": "Biometric Mismatch",
+            "detail": "Live facial presentation does not match document portrait.",
+            "action": "Detain passenger for identity investigation."
+        })
+
     return {
         "id": screening.id,
         "created_at": screening.created_at,
@@ -544,7 +602,7 @@ def get_screening_detail(
         "risk_score": screening.risk_score,
         "risk_band": screening.risk_band,
         "recommendation": screening.recommendation,
-        "ocr_status": "SUCCESS" if reconstructed_fields else "FAILED",
+        "ocr_status": computed_ocr_status,
         "ocr_engine": getattr(screening, "ocr_engine", None),
         "execution_latency_ms": screening.execution_latency_ms,
         "doc_image_url": f"/api/v1/screenings/media/{screening.id}/doc",
@@ -565,7 +623,7 @@ def get_screening_detail(
         "face_result": reconstructed_face,
         "biometric_verification": reconstructed_biometric,
         "identity_matches": id_matches,
-        "risk_reasons": [],
+        "risk_reasons": reconstructed_risk_reasons,
         "signal_breakdown": {
             "mrz_integrity": 0.0,
             "tamper_forensics": max([t.score for t in tamper_findings], default=0.0),

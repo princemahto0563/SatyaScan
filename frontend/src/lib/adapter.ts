@@ -194,17 +194,25 @@ export function isLabelNoise(val: string, fieldName?: string): boolean {
   if (s.length < 2) return true;
 
   if (LABEL_NOISE_PATTERNS.some((p) => p.test(s))) return true;
-  if (/^(\/NOM|MAT\s*\/|ME\s*INOM)/i.test(s)) return true;
-  const cleanAlpha = s.replace(/[^A-Za-z]/g, "").toUpperCase();
+  if (/^(\/NOM|MAT\s*\/|ME\s*INOM|MATRICULE)/i.test(s)) return true;
+
+  // If value has 3+ consecutive digits, it's typically a document number or date
+  if (/\d{3,}/.test(s)) return false;
+
   const STOPWORDS = new Set([
     "NOM", "SURNAME", "PRENOM", "PRENOMS", "GIVEN", "GIVENNAMES", "NAME", "FULLNAME",
     "MAT", "MATRICULE", "HOLDER", "SIGNATURE", "OFFICER", "PASSPORT", "PASSPORTNO",
     "DOCUMENT", "DOCUMENTNO", "VISA", "VIGNETTE", "NATIONALITY", "CITIZENSHIP", "SEX",
-    "DATEOFBIRTH", "DOB", "EXPIRY", "EXPIRATION", "VALIDITY", "OF", "NO", "NR", "NUM", "BIRTH"
+    "DATEOFBIRTH", "DOB", "EXPIRY", "EXPIRATION", "VALIDITY", "OF", "NO", "NR", "NUM", "BIRTH",
+    "MATNOM", "SURNAMENOM", "DELIVRANCE", "DELIVERY", "AUTORITE", "AUTHORITY", "BEARER", "PAYS"
   ]);
+
+  const cleanAlpha = s.replace(/[^A-Za-z]/g, "").toUpperCase();
   if (STOPWORDS.has(cleanAlpha)) return true;
-  const tokens = s.toUpperCase().split(/[\s/:,.\-_]+/).filter(Boolean);
+
+  const tokens = s.toUpperCase().split(/[^A-Za-z]+/).filter(Boolean);
   if (tokens.length > 0 && tokens.every(t => STOPWORDS.has(t) || t.length <= 1)) return true;
+
   return false;
 }
 
@@ -350,6 +358,33 @@ export function normalizeDateForComparison(val: any): string | null {
     }
   }
 
+  // Pattern: DD Month YYYY (e.g. 20 JULY 2003, 01 MAR 2024)
+  const monthNameMatch = s.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (monthNameMatch) {
+    const monthMap: Record<string, number> = {
+      jan: 1, january: 1,
+      feb: 2, february: 2,
+      mar: 3, march: 3,
+      apr: 4, april: 4,
+      may: 5,
+      jun: 6, june: 6,
+      jul: 7, july: 7,
+      aug: 8, august: 8,
+      sep: 9, september: 9,
+      oct: 10, october: 10,
+      nov: 11, november: 11,
+      dec: 12, december: 12,
+    };
+    const m = monthMap[monthNameMatch[2].toLowerCase()];
+    if (m) {
+      const d = parseInt(monthNameMatch[1], 10);
+      const y = parseInt(monthNameMatch[3], 10);
+      if (isValidCalendarDate(y, m, d)) {
+        return `${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+      }
+    }
+  }
+
   // Pattern: YYMMDD (6 digits, ICAO 9303 standard)
   const raw6Match = s.match(/^(\d{2})(\d{2})(\d{2})$/);
   if (raw6Match) {
@@ -492,6 +527,17 @@ function buildCrossCheckRows(
     } else if (mrzVal) {
       status = "MRZ_ONLY";
       statusLabel = "MRZ Only";
+    } else {
+      if (isInputInsufficient) {
+        status = "UNVERIFIED";
+        statusLabel = "Unverified";
+      } else if (isMrzNotApplicable) {
+        status = "NOT_APPLICABLE";
+        statusLabel = "Not Applicable";
+      } else {
+        status = "NOT_PRESENT";
+        statusLabel = "Not Present";
+      }
     }
 
     let displayMrzValue = mrzVal;
@@ -598,7 +644,11 @@ export function mapScreeningResponseToReportViewModel(
   // Document Fields with truthful resolution
   const docType = data.document_type || "PASSPORT";
   const docNumber = resolveFieldValue("document_number", data.extracted_fields, data.mrz_data, mrzAllChecksPassed, "");
-  const fullDocNumber = docNumber || (data.masked_document_id ? `${data.masked_document_id} (Masked)` : "Not available");
+  const hasValidMasked = data.masked_document_id &&
+    !data.masked_document_id.includes("UNKNOWN") &&
+    !data.masked_document_id.includes("UNAVAILABLE") &&
+    !data.masked_document_id.startsWith("VIS******");
+  const fullDocNumber = docNumber || (hasValidMasked ? `${data.masked_document_id} (Masked)` : "Not available");
   const surname = resolveFieldValue("surname", data.extracted_fields, data.mrz_data, mrzAllChecksPassed, "Not available");
   const givenNames = resolveFieldValue("given_names", data.extracted_fields, data.mrz_data, mrzAllChecksPassed, "Not available");
   const fullName = resolveFieldValue("full_name", data.extracted_fields, data.mrz_data, mrzAllChecksPassed, "Not available");
@@ -678,7 +728,7 @@ export function mapScreeningResponseToReportViewModel(
     data.extracted_fields,
     data.mrz_data,
     data.document_type || "PASSPORT",
-    mrzStatusRaw || (isPassport ? "MRZ_VALID" : "MRZ_NOT_APPLICABLE")
+    mrzStatusRaw || (pageType === "PASSPORT_COVER" || !isIdentityPage ? "MRZ_INPUT_INSUFFICIENT" : (!isPassport ? "MRZ_NOT_APPLICABLE" : "MRZ_VALID"))
   );
   const discrepancies: Record<string, { visual: string; mrz: string }> = {};
   for (const row of crossCheckRows) {
@@ -726,7 +776,7 @@ export function mapScreeningResponseToReportViewModel(
     },
 
     mrz: {
-      applicable: isPassport,
+      applicable: isPassport && pageType !== "PASSPORT_COVER" && isIdentityPage,
       parsed: mrzParsed,
       statusBadge: mrzStatusBadge,
       statusColor: mrzStatusColor,

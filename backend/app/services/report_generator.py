@@ -481,12 +481,13 @@ class ReportGenerator:
         # -------------------------------------------------------------
         elements.append(Paragraph("5. Cryptographic Audit Trail & Officer Sign-off", section_heading))
         b_anchor = case_data.get("blockchain_anchor") or {}
-        anchor_status = b_anchor.get("status", "SIMULATED / OFFLINE")
+        raw_anchor_status = b_anchor.get("status", "UNAVAILABLE")
+        anchor_status = "OFFLINE / NOT CONNECTED" if raw_anchor_status == "UNAVAILABLE" else raw_anchor_status
         status_color = "#059669" if anchor_status == "VERIFIED" else ("#DC2626" if anchor_status == "MISMATCH" else "#D97706")
 
         doc_hash = b_anchor.get("document_hash") or "N/A"
         res_hash = b_anchor.get("result_hash") or "N/A"
-        tx_id = b_anchor.get("transaction_id") or "SIMULATED-LOCAL-ANCHOR (External private ledger offline)"
+        tx_id = b_anchor.get("transaction_id") or "None (Ledger offline)"
         audit_events = case_data.get("audit_trail", [])
 
         anchor_info_p = Paragraph(
@@ -496,7 +497,7 @@ class ReportGenerator:
             f"<font size=5.5 color='#475569'><b>Doc Digest:</b> {doc_hash}</font><br/>"
             f"<font size=5.5 color='#475569'><b>Canonical Result Digest:</b> {res_hash}</font><br/>"
             f"<font size=5.5 color='#64748B'><b>Tx Digest:</b> {tx_id}</font><br/>"
-            f"<font size=6 color='#64748B'><i>Zero PII on-chain. Local SHA-256 chain operates continuously; ledger anchor operates in connected or simulation mode.</i></font>",
+            f"<font size=6 color='#64748B'><i>Zero PII on-chain. SHA-256 cryptographic audit chain is active. Hyperledger Fabric ledger is currently offline.</i></font>",
             normal
         )
 
