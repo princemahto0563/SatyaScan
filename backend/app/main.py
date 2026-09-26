@@ -216,18 +216,18 @@ def diagnostic_check():
         "mrz_lines_count": len(eng_res.get("mrz_candidate_lines", [])),
         "fields_extracted": sum(1 for v in eng_res.get("extracted_fields", {}).values() if v),
         "face_diagnostics": {
-            "cascade_debug": getattr(fvs, "cascade_debug", {}),
+            "cascade_debug": {k: str(v) for k, v in getattr(fvs, "cascade_debug", {}).items()},
             "face_cascade_loaded": fvs.face_cascade is not None,
             "eye_cascade_loaded": fvs.eye_cascade is not None,
             "sface_version": fvs.provider.version,
-            "arjun_doc_detected": doc_q.get("detected"),
-            "arjun_doc_usable": doc_q.get("usable"),
-            "arjun_doc_reasons": doc_q.get("reasons"),
-            "arjun_live_detected": live_q.get("detected"),
-            "arjun_verify_result": verify_res.get("verification_result"),
-            "arjun_similarity": verify_res.get("similarity_score"),
-            "arjun_recommendation": verify_res.get("recommendation"),
-            "arjun_reason": verify_res.get("reason"),
+            "arjun_doc_detected": bool(doc_q.get("detected")),
+            "arjun_doc_usable": bool(doc_q.get("usable")),
+            "arjun_doc_reasons": doc_q.get("reasons", []),
+            "arjun_live_detected": bool(live_q.get("detected")),
+            "arjun_verify_result": str(verify_res.get("verification_result")),
+            "arjun_similarity": float(verify_res.get("similarity_score", 0.0) or 0.0),
+            "arjun_recommendation": str(verify_res.get("recommendation", "")),
+            "arjun_reason": str(verify_res.get("reason", "")),
         }
     }
 

@@ -147,7 +147,7 @@ class ScreeningOrchestrator:
 
             raise HTTPException(
                 status_code=500,
-                detail="Screening could not be completed due to an internal processing error. Please retry or contact the administrator."
+                detail=f"Screening could not be completed due to an internal processing error: {exc}"
             )
 
     def _execute_pipeline(
