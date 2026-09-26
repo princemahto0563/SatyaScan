@@ -47,40 +47,60 @@ class FaceVerificationService:
         # Load OpenCV Haar cascades for frontal face, profile face, and eyes
         self.face_cascade = None
         self.profile_cascade = None
-        self.eye_cascade = None
+        self.cascade_debug = {}
         try:
             cascade_cls = getattr(cv2, "CascadeClassifier", None)
+            self.cascade_debug["cascade_cls_found"] = cascade_cls is not None
             if cascade_cls is not None:
-                weights_dir = os.path.join(os.path.dirname(__file__), "weights")
+                weights_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "weights"))
                 data_dir = getattr(cv2.data, "haarcascades", "") if hasattr(cv2, "data") else ""
+                self.cascade_debug["weights_dir"] = weights_dir
+                self.cascade_debug["data_dir"] = data_dir
 
                 # Frontal face cascade
-                for p in [os.path.join(weights_dir, "haarcascade_frontalface_default.xml"),
-                          os.path.join(data_dir, "haarcascade_frontalface_default.xml")]:
+                frontal_cands = [
+                    os.path.join(weights_dir, "haarcascade_frontalface_default.xml"),
+                    os.path.join(data_dir, "haarcascade_frontalface_default.xml") if data_dir else "",
+                    "/app/ai/face/weights/haarcascade_frontalface_default.xml"
+                ]
+                self.cascade_debug["frontal_candidates"] = [(c, os.path.exists(c)) for c in frontal_cands if c]
+                for p in frontal_cands:
                     if p and os.path.exists(p):
-                        loaded = cascade_cls(p)
+                        loaded = cascade_cls(os.path.abspath(p))
                         if not loaded.empty():
                             self.face_cascade = loaded
+                            self.cascade_debug["frontal_loaded_from"] = p
                             break
-
-                # Profile face cascade
-                for p in [os.path.join(weights_dir, "haarcascade_profileface.xml"),
-                          os.path.join(data_dir, "haarcascade_profileface.xml")]:
-                    if p and os.path.exists(p):
-                        loaded = cascade_cls(p)
-                        if not loaded.empty():
-                            self.profile_cascade = loaded
-                            break
+                        else:
+                            self.cascade_debug["frontal_empty_from"] = p
 
                 # Eye cascade
-                for p in [os.path.join(weights_dir, "haarcascade_eye.xml"),
-                          os.path.join(data_dir, "haarcascade_eye.xml")]:
+                eye_cands = [
+                    os.path.join(weights_dir, "haarcascade_eye.xml"),
+                    os.path.join(data_dir, "haarcascade_eye.xml") if data_dir else "",
+                    "/app/ai/face/weights/haarcascade_eye.xml"
+                ]
+                for p in eye_cands:
                     if p and os.path.exists(p):
-                        loaded = cascade_cls(p)
+                        loaded = cascade_cls(os.path.abspath(p))
                         if not loaded.empty():
                             self.eye_cascade = loaded
                             break
-        except Exception:
+
+                # Profile face cascade
+                profile_cands = [
+                    os.path.join(weights_dir, "haarcascade_profileface.xml"),
+                    os.path.join(data_dir, "haarcascade_profileface.xml") if data_dir else "",
+                    "/app/ai/face/weights/haarcascade_profileface.xml"
+                ]
+                for p in profile_cands:
+                    if p and os.path.exists(p):
+                        loaded = cascade_cls(os.path.abspath(p))
+                        if not loaded.empty():
+                            self.profile_cascade = loaded
+                            break
+        except Exception as e:
+            self.cascade_debug["exception"] = str(e)
             self.face_cascade = None
             self.profile_cascade = None
             self.eye_cascade = None
@@ -133,15 +153,14 @@ class FaceVerificationService:
             pw, ph = int(iw * 0.20), int(ih * 0.367)
             crop_zone = gray[py1:py1+ph, px1:px1+pw]
             if crop_zone.size > 0 and np.std(crop_zone) > 18.0 and cv2.Laplacian(crop_zone, cv2.CV_64F).var() > 25.0:
-                has_facial_feature = False
+                has_facial_feature = True
                 if self.eye_cascade is not None:
                     eyes = self.eye_cascade.detectMultiScale(crop_zone, scaleFactor=1.1, minNeighbors=2)
-                    if len(eyes) >= 1:
-                        has_facial_feature = True
-                if self.face_cascade is not None and not has_facial_feature:
+                    has_facial_feature = len(eyes) >= 1
+                elif self.face_cascade is not None:
                     faces_in_crop = self.face_cascade.detectMultiScale(crop_zone, scaleFactor=1.05, minNeighbors=2)
-                    if len(faces_in_crop) >= 1:
-                        has_facial_feature = True
+                    has_facial_feature = len(faces_in_crop) >= 1
+
                 if has_facial_feature:
                     fx = px1 + int(pw * 0.228)
                     fy = py1 + int(ph * 0.20)
@@ -158,6 +177,8 @@ class FaceVerificationService:
                     gf = self.face_cascade.detectMultiScale(ghost_zone, scaleFactor=1.05, minNeighbors=2)
                     if len(gf) >= 1:
                         candidates.append((gx1, gy1, gw, gh))
+                else:
+                    candidates.append((gx1, gy1, gw, gh))
 
             if candidates:
                 return candidates

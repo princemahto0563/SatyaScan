@@ -216,6 +216,7 @@ def diagnostic_check():
         "mrz_lines_count": len(eng_res.get("mrz_candidate_lines", [])),
         "fields_extracted": sum(1 for v in eng_res.get("extracted_fields", {}).values() if v),
         "face_diagnostics": {
+            "cascade_debug": getattr(fvs, "cascade_debug", {}),
             "face_cascade_loaded": fvs.face_cascade is not None,
             "eye_cascade_loaded": fvs.eye_cascade is not None,
             "sface_version": fvs.provider.version,
