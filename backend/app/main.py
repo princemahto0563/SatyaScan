@@ -196,6 +196,14 @@ def diagnostic_check():
     eng_res = eng.process_image(dummy)
     eng_time = time.perf_counter() - t1
 
+    from ai.face.service import FaceVerificationService
+    fvs = FaceVerificationService()
+    arjun_doc = cv2.imread("data/genuine/case01_genuine_arjun.jpg")
+    arjun_live = cv2.imread("data/selfies/case01_selfie_arjun.jpg")
+    doc_crop, doc_box, doc_q = fvs.detect_and_crop_face(arjun_doc, is_document=True) if arjun_doc is not None else (None, None, {})
+    live_crop, live_box, live_q = fvs.detect_and_crop_face(arjun_live, is_document=False) if arjun_live is not None else (None, None, {})
+    verify_res = fvs.verify("data/genuine/case01_genuine_arjun.jpg", "data/selfies/case01_selfie_arjun.jpg") if arjun_doc is not None and arjun_live is not None else {}
+
     return {
         "paddle_available": PADDLE_AVAILABLE or RAPID_AVAILABLE,
         "rapid_available": RAPID_AVAILABLE,
@@ -207,6 +215,19 @@ def diagnostic_check():
         "total_lines": eng_res.get("total_lines_detected", 0),
         "mrz_lines_count": len(eng_res.get("mrz_candidate_lines", [])),
         "fields_extracted": sum(1 for v in eng_res.get("extracted_fields", {}).values() if v),
+        "face_diagnostics": {
+            "face_cascade_loaded": fvs.face_cascade is not None,
+            "eye_cascade_loaded": fvs.eye_cascade is not None,
+            "sface_version": fvs.provider.version,
+            "arjun_doc_detected": doc_q.get("detected"),
+            "arjun_doc_usable": doc_q.get("usable"),
+            "arjun_doc_reasons": doc_q.get("reasons"),
+            "arjun_live_detected": live_q.get("detected"),
+            "arjun_verify_result": verify_res.get("verification_result"),
+            "arjun_similarity": verify_res.get("similarity_score"),
+            "arjun_recommendation": verify_res.get("recommendation"),
+            "arjun_reason": verify_res.get("reason"),
+        }
     }
 
 
